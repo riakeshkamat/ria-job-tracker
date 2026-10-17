@@ -14,12 +14,15 @@ Open http://127.0.0.1:8127. The first scheduled collection catches up on startup
 
 ## What it does
 
-- Reads public Greenhouse, Ashby, Lever, and Recruitee employer feeds; five GitHub new-grad lists; and the Remotive, Jobicy, and Himalayas public remote-job feeds.
+- Reads public Greenhouse, Ashby, Lever, Recruitee, and SmartRecruiters employer feeds; seven GitHub new-grad lists; and the Remotive, Jobicy, and Himalayas public remote-job feeds.
 - Imports thousands of employer board identifiers from two public directories on every run, as well as application URLs in the lists. New directory entries join the same run. Directory membership is a discovery hint; only a successful live feed check counts as working coverage.
 - Provides searchable, paginated source health, recent successful checks, unattempted feeds, and failures. See [COVERAGE.md](COVERAGE.md) for exact feed scopes, attribution, and gaps.
-- Collects daily at 8am America/New_York by default, handles daylight saving time, and catches up after restarts.
+- Collects repeatedly through the day with a two-hour target interval, bounded worker pools, and no overlapping runs. Long crawls finish before the next starts. Publication runs independently at **6:30 PM America/New_York**.
+- Publishes one fixed daily edition, capped at **50** jobs from the previous cutoff to the current cutoff. Fewer eligible jobs means fewer entries, including zero. No older-job padding or post-publication topups.
+- Requires a full employer posting, positive US location evidence, timezone-aware employer publication in the window, and a successful employer check before cutoff. Missing or community-only dates stay in a separate review queue. First-found time never substitutes for posting time.
+- Provides Applied / Skip controls. Opening Apply reveals Yes, applied / No, skip; explicit decisions remove the job and preserve history. Published job IDs and matching company/title/location identities do not appear in subsequent editions. Older editions remain accessible.
 - Requires a positive US location signal in Jobs, Saved, and Applications. Non-US, unknown, ambiguous, and conflicting locations stay out of these views. Dubai/UAE, the country Georgia, and contradictory remote-region titles are covered by regression tests. Existing stored records are migrated before serving the updated feed; statuses and notes are retained. Multi-location jobs can qualify when a US option is explicitly listed.
-- Includes explicit new-grad/entry-level roles and requirements whose minimum is up to three years. Unspecified experience stays visible. Clearly senior roles, internships, and explicit pre-2027 cohorts go to the audit views. Explicitly early-career titles take precedence over potentially contradictory experience text.
+- Includes explicit new-grad/entry-level roles and requirements whose minimum is up to three years. Unspecified experience stays visible. Clearly senior roles, internships, and explicit pre-2027 cohorts go to the audit views. Senior titles and high requirements always take precedence over Engineer I or Associate. The daily edition is stricter: mandatory positive prior experience is held out, while ranges beginning at zero can qualify. Clear entry-level roles with no stated cohort/start date can qualify with uncertainty labeled.
 - Provides Jobs, Saved, and Applications views; role, sponsorship, found-date, work arrangement, experience, graduate-cohort, recent employer-check, status, and sort filters. Jobs already applied to are hidden from Jobs by default. Filtered views are bookmarkable. Found-date filtering uses discovery time, not an invented publication date. Work arrangement uses provider metadata or explicit location text, never a guess from benefits/description keywords. Existing records without this metadata may show Not stated until refreshed.
 - Prioritizes explicit graduate roles above generic roles with unknown experience. No skill, GPA, university, resume, or fit-score filtering.
 - Preserves application status and notes across refreshes and links to the employer application page where available.
@@ -29,7 +32,7 @@ Open http://127.0.0.1:8127. The first scheduled collection catches up on startup
 
 ## Reliability boundaries
 
-This is a monitored-source collector, not exhaustive internet coverage. ATS feeds operate per employer; employers using other systems are discoverable through lists but remain unverified until an appropriate adapter is available. LinkedIn and Jobright are not scraped: their published policies restrict automated collection. Add a discovered application URL manually, or add a recognized employer board in settings.
+This is a monitored-source collector, not exhaustive internet coverage. ATS feeds operate per employer; employers using other systems are discoverable through lists but remain unverified until an appropriate adapter is available. LinkedIn and the Jobright search website are not scraped: their published policies restrict automated collection. Add a discovered application URL manually, or add a recognized employer board in settings.
 
 Collection retries transient network/HTTP failures with bounded backoff, rejects incomplete/changed schemas, and commits each valid source snapshot in a transaction. Fixed platform worker pools and one SQLite ingestion writer bound concurrent memory and database writes. Lever requests, including pagination and retries, are spaced at least 1.05 seconds apart; shared Greenhouse/Ashby hosts receive at most four requests per second. The broader crawl can take hours, and existing results stay available while it runs.
 
@@ -37,7 +40,7 @@ Failed sources do not remove existing jobs. A job becomes Closed after absence f
 
 Posting dates are displayed only when supplied, and a source's update timestamp is not relabeled as an original posting date. First found records when this tracker discovered the job. Start dates are often absent; these remain unverified. ISO-formatted explicit start dates before availability are excluded, but other date phrasing needs human review. Rules are conservative heuristics, not proof of eligibility. Geography is intentionally conservative: bare Remote, Worldwide, and ambiguous locations are excluded from the main views unless a US option is explicitly supported. Source location errors can still require correction. Original location text and all records remain available under Settings → Review hidden records; application history is never deleted by filtering.
 
-The scheduler allows one active collection per process. Run **one replica and one worker**. Collection is scheduled inside the persistent service, so a separate Railway cron service is unnecessary. It does not provide an uptime SLA. Process health and source-refresh health are separate. Automatic catch-up records the latest due daily run, not one run for each missed day. A partial run is retried on the next daily cycle or by the Refresh button.
+The collector allows one active run per process. A separate publisher checks the cutoff every 30 seconds and atomically freezes an edition; it never waits for the crawl or Plus review. On first activation it waits for the next cutoff instead of inventing an earlier edition. Published snapshots survive restarts. Missed publication can use only records already collected and checked by that cutoff. Run **one replica and one worker**. Collection is scheduled inside the persistent service, so a separate Railway cron service is unnecessary. It does not provide an uptime SLA. Process health and source-refresh health are separate. Automatic catch-up records the latest due daily run, not one run for each missed day. Partial collection is retried on the next interval or by the Refresh sources button. Coverage may remain incomplete at cutoff and is recorded with each edition.
 
 ## Railway
 
@@ -47,7 +50,7 @@ The scheduler allows one active collection per process. Run **one replica and on
 4. Generate a Railway HTTPS domain. The service listens on Railway's `PORT` and exposes `/healthz` for process/database readiness.
 5. Keep one replica. The included `railway.toml` configures the Docker build, readiness check, and restart policy.
 
-Other configuration: `DATA_DIR`, `DAILY_HOUR`, `DAILY_TIMEZONE`, `START_DATE`, `SCHEDULE_ENABLED`, and `CHATGPT_DAILY_LIMIT` (default 30 attempts per UTC day). Production refuses to start without a password and encryption secret. Sessions are signed, HttpOnly, SameSite=Strict, and Secure in production. JSON mutation endpoints require a same-origin custom request header; credential files never enter localStorage. Source identifiers cannot turn collectors into arbitrary URL fetchers.
+Other configuration: `DATA_DIR`, `DAILY_HOUR`, `DAILY_TIMEZONE`, `COLLECTION_INTERVAL_HOURS` (default 2), `PUBLICATION_HOUR` (18), `PUBLICATION_MINUTE` (30), `STRICT_2027_COHORT` (false), `START_DATE`, `SCHEDULE_ENABLED`, and `CHATGPT_DAILY_LIMIT` (default 30 attempts per UTC day). Production refuses to start without a password and encryption secret. Sessions are signed, HttpOnly, SameSite=Strict, and Secure in production. JSON mutation endpoints require a same-origin custom request header; credential files never enter localStorage. Source identifiers cannot turn collectors into arbitrary URL fetchers.
 
 Railway Hobby's included usage is not unlimited; this app shares the account's resource allowance. Measure CPU, RAM, and volume usage in Railway before choosing a spending limit.
 
@@ -97,3 +100,5 @@ uv pip compile requirements.in --upgrade -o requirements.txt
 Tests cover authorization, source parsing, scope/visa ambiguity, deduplication, rollback, retention, closure, revisions, DST scheduling, encrypted credentials, and completed/failed/interrupted Plus streams. Unit tests use mock feeds and do not spend subscription usage or call paid APIs. Regenerate the dependency lock and rerun the suite when updating dependencies.
 
 MIT license applies to application code, not third-party job descriptions or services. No resume, private application history, OAuth file, database, password, or deployment secret belongs in the public repository.
+
+Daily publication rules, timestamp limitations (including republishing), daylight-saving windows, source gaps, and repeat detection limits are documented in [COVERAGE.md](COVERAGE.md).

@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {view:'feed', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, expanded:new Set(), requestId:0};
+const state = {view:'edition', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, edition:null, editionId:'', pendingApply:sessionStorage.getItem('pending-application'), expanded:new Set(), requestId:0};
 const sourceState={offset:0,total:0,requestId:0};
 const filterFields={'search':'search','status':'status-filter','sponsorship':'sponsorship','role':'role-filter',
   'work_model':'work-filter','found_days':'found-filter','experience':'experience-filter','graduate':'graduate-filter','sort':'sort-filter'};
@@ -8,7 +8,7 @@ const statuses = ['new','saved','applied','interview','offer','rejected','dismis
 const label = x => x.charAt(0).toUpperCase()+x.slice(1);
 function el(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text; if(cls)e.className=cls; return e; }
 function message(text, error=false) { $('message').textContent=text; $('message').className=error?'error':''; $('message').hidden=!text; }
-function date(value, full=false) { if(!value)return 'Not supplied'; const d=new Date(value); return Number.isNaN(d.getTime())?'Not supplied':d.toLocaleString(undefined,full?{dateStyle:'medium',timeStyle:'short'}:{month:'short',day:'numeric',year:'numeric'}); }
+function date(value, full=false) { if(!value)return 'Not supplied'; const d=new Date(value); return Number.isNaN(d.getTime())?'Not supplied':d.toLocaleString('en-US',full?{dateStyle:'medium',timeStyle:'short',timeZone:'America/New_York'}:{month:'short',day:'numeric',year:'numeric',timeZone:'America/New_York'}); }
 function ago(value) { if(!value)return 'Never'; const mins=Math.max(0,Math.floor((Date.now()-new Date(value).getTime())/60000)); return mins<1?'Just now':mins<60?`${mins}m ago`:mins<1440?`${Math.floor(mins/60)}h ago`:`${Math.floor(mins/1440)}d ago`; }
 function link(text,url,cls) { const a=el('a',text,cls); a.href=url; a.target='_blank'; a.rel='noopener noreferrer'; return a; }
 async function api(path, options={}) {
@@ -37,6 +37,7 @@ function detailRow(job) {
   detail.append(el('p',`Employer board last checked: ${job.verified_at?date(job.verified_at,true):'Not verified; discovered through a list or added manually'}. Availability: ${job.availability}.`));
   detail.append(el('p',`Source posting / publication date: ${date(job.posted_at)}. First found by this tracker: ${date(job.first_seen,true)}.`));
   const sources=el('p'); sources.textContent='Sources: '+job.sources.map(s=>`${s.name} (${s.last_error?'last refresh failed':s.misses?'absent from latest snapshot':'seen '+ago(s.last_seen)})`).join('; ');detail.append(sources);
+  if(job.eligibility){detail.append(el('h3','Why this job was published'));for(const proof of job.eligibility.evidence)detail.append(el('blockquote',proof));if(!job.eligibility.cohort_confirmed)detail.append(el('p','Entry-level role with no confirmed June 2027 start date. Check availability with the employer.'));}
   if(job.ai_review) {
     detail.append(el('h3','ChatGPT advice (advisory)'));
     detail.append(el('p',`${label(job.ai_review.sponsorship)}: ${job.ai_review.note}`));
@@ -48,38 +49,85 @@ function detailRow(job) {
   const save=el('button','Save notes');save.type='button';save.addEventListener('click',()=>action(async()=>{save.disabled=true;try{await api('/api/jobs/'+job.id,{method:'PATCH',body:JSON.stringify({notes:notes.value})});job.notes=notes.value;message('Notes saved.');}finally{save.disabled=false;}}));detail.append(save);
   cell.append(detail);row.append(cell);return row;
 }
+async function decide(job, status) {
+  await api('/api/jobs/'+job.id,{method:'PATCH',body:JSON.stringify({status})});
+  if(state.pendingApply===job.id){state.pendingApply=null;sessionStorage.removeItem('pending-application');}
+  message(status==='applied'?'Marked applied. Removed from your edition.':'Skipped. Removed from your edition.');
+  await loadJobs();
+}
+function renderEdition(data) {
+  state.edition=data;
+  const select=$('edition-select');select.replaceChildren();
+  if(!data.editions.length){const option=el('option','No published editions yet');option.value='';select.append(option);}
+  for(const item of data.editions){const option=el('option',date(item.cutoff,true));option.value=item.id;select.append(option);}
+  select.value=data.edition?.id||'';select.disabled=!data.editions.length;
+  const edition=data.edition;
+  $('edition-title').textContent=edition?new Date(edition.cutoff).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'America/New_York'}):'First edition coming soon';
+  $('edition-window').textContent=edition?`${date(edition.window_start,true)} to ${date(edition.cutoff,true)} Eastern. Published ${date(edition.published_at,true)}.`:`Publishes ${date(data.next_cutoff,true)} Eastern, covering the preceding 24 hours.`;
+  $('edition-progress').textContent=edition?`${data.total} remaining · ${data.handled} applied or skipped · ${edition.total} published${data.withdrawn?' · '+data.withdrawn+' withdrawn after publication':''}`:'Up to 50 qualifying jobs. Fewer matches means a smaller edition.';
+  $('edition-coverage').textContent=edition?(edition.report.collection_running?'Collection was still running at cutoff. This edition includes only jobs verified before cutoff.':'Edition finalized. New discoveries will not be added to it.'):'Collecting and checking employer postings. Missing dates and unclear entry-level eligibility stay outside the edition.';
+}
 function renderJobs() {
   $('jobs-body').replaceChildren();
   for(const job of state.jobs) {
     const row=el('tr');
     const role=el('button',job.title,'role');role.type='button';role.setAttribute('aria-expanded',String(state.expanded.has(job.id)));role.setAttribute('aria-controls','detail-'+job.id);
     role.addEventListener('click',()=>{state.expanded.has(job.id)?state.expanded.delete(job.id):state.expanded.add(job.id);renderJobs();document.querySelector(`[aria-controls="detail-${job.id}"]`)?.focus();});
-    const name=el('td');name.append(role,el('div',job.company,'company'));name.append(el('div',`Found ${date(job.first_seen)} · ${job.min_years==null?'Experience not stated':`${job.min_years}+ years required`}`,'subtext'));row.append(name);
+    const name=el('td');name.append(role,el('div',job.company,'company'));name.append(el('div',state.view==='edition'?`Published ${date(job.posted_at,true)} · ${job.eligibility?.cohort_confirmed?'2027 / start-date evidence':'Start date not stated'}`:`Found ${date(job.first_seen)} · ${job.min_years==null?'Experience not stated':`${job.min_years}+ years required`}`,'subtext'));row.append(name);
     const location=el('td',job.us_location||job.location||'Location not supplied','location');if(job.work_model!=='unknown')location.append(el('div',label(job.work_model),'subtext'));row.append(location);
     const eligibility=el('td');eligibility.append(badge(job));if(job.availability!=='open')eligibility.append(el('div',job.availability==='closed'?'Absent from two employer snapshots':'Employer posting not verified','subtext'));
     else if(Date.now()-new Date(job.verified_at).getTime()>36*3600000)eligibility.append(el('div','Verification is stale','subtext'));
     row.append(eligibility);
     const status=el('select',undefined,'status-select');status.setAttribute('aria-label','Application status for '+job.title+' at '+job.company);
     for(const value of statuses){const option=el('option',label(value));option.value=value;status.append(option);}status.value=job.status;
-    status.addEventListener('change',()=>action(async()=>{status.disabled=true;try{await api('/api/jobs/'+job.id,{method:'PATCH',body:JSON.stringify({status:status.value})});await loadJobs();}catch(e){status.value=job.status;throw e;}finally{status.disabled=false;}}));const statusCell=el('td');statusCell.append(status);row.append(statusCell);
-    const apply=el('td');apply.append(link('Apply ↗',job.apply_url,'apply'));row.append(apply);$('jobs-body').append(row);
+    status.addEventListener('change',()=>action(async()=>{status.disabled=true;try{await api('/api/jobs/'+job.id,{method:'PATCH',body:JSON.stringify({status:status.value})});await loadJobs();}catch(e){status.value=job.status;throw e;}finally{status.disabled=false;}}));const statusCell=el('td',undefined,'decision-cell');
+    if(state.view==='edition') {
+      if(state.pendingApply===job.id) {
+        statusCell.append(el('span','Did you apply?','subtext'));
+        const yes=el('button','Yes, applied');yes.addEventListener('click',()=>action(()=>decide(job,'applied')));
+        const no=el('button','No, skip');no.addEventListener('click',()=>action(()=>decide(job,'dismissed')));
+        statusCell.append(yes,no);
+      } else {
+        const applied=el('button','Applied');applied.addEventListener('click',()=>action(()=>decide(job,'applied')));
+        const skip=el('button','Skip','quiet');skip.addEventListener('click',()=>action(()=>decide(job,'dismissed')));statusCell.append(applied,skip);
+      }
+    } else statusCell.append(status);
+    row.append(statusCell);
+    const apply=el('td');const application=link('Apply ↗',job.apply_url,'apply');
+    application.addEventListener('click',()=>{if(state.view==='edition'){state.pendingApply=job.id;sessionStorage.setItem('pending-application',job.id);setTimeout(renderJobs,0);}});
+    apply.append(application);row.append(apply);$('jobs-body').append(row);
     if(state.expanded.has(job.id))$('jobs-body').append(detailRow(job));
   }
   $('result-count').textContent=state.total.toLocaleString()+' '+(state.total===1?'job':'jobs');
   $('empty').hidden=!!state.jobs.length;
+  $('jobs-table').hidden=!state.jobs.length;$('empty-clear').hidden=$('clear-filters').hidden;
   if(!state.jobs.length) {
-    const untouched=state.view==='feed'&&!state.overview?.runs?.length&&$('clear-filters').hidden;
+    const untouched=state.view==='review'&&!state.overview?.runs?.length&&$('clear-filters').hidden;
     $('empty').querySelector('h2').textContent=untouched?'No jobs collected yet':state.view==='saved'?'No saved jobs match':'No jobs match these filters';
     $('empty').querySelector('p').textContent=untouched?'Refresh jobs to check the configured sources.':'Clear filters to see more US roles. Non-US and unconfirmed locations stay out of the main views.';
   }
   $('page-info').textContent=state.total?`${state.offset+1}–${Math.min(state.offset+100,state.total)} of ${state.total.toLocaleString()}`:'';
   $('previous').disabled=state.offset===0;$('next').disabled=state.offset+100>=state.total;
   $('view-note').textContent=['excluded','closed','all'].includes(state.view)?'Audit view: may contain non-US or unconfirmed locations.':state.view==='tracked'?'Your application history.':state.view==='saved'?'Your shortlist of US roles.':$('unapplied-filter').checked?'Unapplied US roles. Unclear sponsorship stays visible.':'US location required. Unclear sponsorship stays visible.';
-  $('unapplied-label').hidden=state.view!=='feed';
+  $('unapplied-label').hidden=state.view!=='review';
+  const daily=state.view==='edition';
+  $('edition-panel').hidden=!daily;$('extra-filters').hidden=daily;
+  $('found-filter').closest('label').hidden=daily;$('sort-filter').closest('label').hidden=daily;
+  if(daily) {
+    $('result-count').textContent=`${state.total} ${state.total===1?'job':'jobs'} to review`;
+    $('view-note').textContent='Fixed edition. Applied and skipped jobs stay out; no backfilling.';
+    $('page-info').textContent='';$('previous').hidden=true;$('next').hidden=true;
+    if(!state.jobs.length){$('empty').querySelector('h2').textContent=!state.edition?.edition?'Your first edition is being prepared':state.edition.total===0?'You’ve reviewed this edition':'No jobs match these filters';
+      if(state.edition?.edition?.total===0)$('empty').querySelector('h2').textContent='No qualifying jobs in this edition';
+      $('empty').querySelector('p').textContent=!state.edition?.edition?'Your list appears after the daily cutoff. We will not fill it with older or unverified jobs.':state.edition.edition.total===0?'No verified postings met the publication rules in this 24-hour window.':'Applied and skipped jobs stay removed. You can revisit earlier editions using the edition selector.';
+    }
+  } else {$('previous').hidden=false;$('next').hidden=false;if(state.view==='review')$('view-note').textContent='Discovery queue. Dates, start dates, experience or employer evidence may be unconfirmed. These are not published matches.';}
+
 }
 function readFilters() {
   const query=new URLSearchParams({view:state.view,offset:String(state.offset)});
   for(const [key,id] of Object.entries(filterFields))query.set(key,$(id).value);
+  if(state.editionId)query.set('edition_id',state.editionId);
   query.set('verified',String($('verified-filter').checked));query.set('unapplied',String($('unapplied-filter').checked));
   return query;
 }
@@ -91,8 +139,10 @@ function showFilterState() {
 }
 function restoreFilters() {
   const query=new URLSearchParams(location.search);
-  if(['feed','saved','tracked','excluded','closed','all'].includes(query.get('view')))state.view=query.get('view');
+  if(['edition','review','saved','tracked','excluded','closed','all'].includes(query.get('view')))state.view=query.get('view');
+  state.editionId=query.get('edition_id')||'';
   for(const [key,id] of Object.entries(filterFields)) {
+    if(state.view==='edition'&&!['search','role','sponsorship'].includes(key))continue;
     const value=query.get(key);if(value===null)continue;
     if($(id).tagName==='INPUT')$(id).value=value.slice(0,200);
     else if(Array.from($(id).options).some(o=>o.value===value))$(id).value=value;
@@ -108,7 +158,18 @@ async function clearFilters() {
 async function loadJobs() {
   const requestId=++state.requestId;
   const query=readFilters();showFilterState();history.replaceState(null,'','?'+query);
-  const data=await api('/api/jobs?'+query);if(requestId!==state.requestId)return;state.jobs=data.jobs;state.total=data.total;renderJobs();
+  let data;
+  if(state.view==='edition') {
+    data=await api('/api/edition?'+new URLSearchParams({edition_id:state.editionId}));if(requestId!==state.requestId)return;
+    renderEdition(data);
+    const term=$('search').value.trim().toLowerCase();
+    state.jobs=data.jobs.filter(job=>(!term||[job.title,job.company,job.location].join(' ').toLowerCase().includes(term))&&(!$('role-filter').value||job.role_family===$('role-filter').value)&&(!$('sponsorship').value||job.sponsorship===$('sponsorship').value));
+    state.total=state.jobs.length;
+  } else {
+    if(state.view==='review')query.set('view','feed');
+    data=await api('/api/jobs?'+query);if(requestId!==state.requestId)return;state.jobs=data.jobs;state.total=data.total;
+  }
+  renderJobs();
 }
 function renderOverview(o) {
   const latest=o.runs[0];
@@ -118,8 +179,10 @@ function renderOverview(o) {
   else text=`${latest.status==='interrupted'?'Refresh interrupted':latest.status==='failed'?'Refresh failed':'Updated '+ago(latest.finished_at||latest.started_at)}${o.failed_sources?' · Some sources unavailable. Details in Settings.':''}`;
   $('refresh-line').textContent=text;$('refresh-line').className='refresh-line'+(o.failed_sources||latest&&latest.status!=='success'?' warning':'');
   if(o.coverage){const c=o.coverage;$('coverage-line').textContent=`${c.enabled.toLocaleString()} enabled feeds · ${c.recent.toLocaleString()} checked successfully in the last 36 hours · ${c.pending.toLocaleString()} not checked yet · ${c.failed.toLocaleString()} need attention. Coverage is limited to these feeds.`;}
-  $('refresh').disabled=o.collecting;$('refresh').textContent=o.collecting?'Refreshing…':'Refresh jobs';
-  $('schedule-info').textContent=o.schedule_enabled?`Daily collection enabled. Next scheduled run: ${date(o.next_run,true)}. Missed runs catch up after restart.`:'Daily collection is disabled in this environment. Use Refresh jobs.';
+  $('refresh').disabled=o.collecting;$('refresh').textContent=o.collecting?'Refreshing…':'Refresh sources';
+  $('schedule-info').textContent=o.schedule_enabled?'Sources are collected repeatedly through the day. Daily publication is separate and does not wait for a long crawl.':'Automatic collection and publication are disabled in this environment.';
+  if(o.publication){const p=o.publication.preferences;if(document.activeElement!==$('publication-time'))$('publication-time').value=String(p.hour).padStart(2,'0')+':'+String(p.minute||0).padStart(2,'0');$('strict-cohort').checked=p.strict_cohort;}
+  if(o.edition_error)$('schedule-info').textContent+=' '+o.edition_error.message;
   const p=o.plus;
   $('plus-status').textContent=p.connected?`Using ChatGPT plan · ${p.email||'Connected account'} · ${p.model||'Choose a model'} · up to ${p.daily_limit} requests per UTC day`:'Not connected. Daily collection does not require an AI subscription.';
   if(p.last_result)$('plus-status').textContent+=' · '+p.last_result.message;
@@ -128,7 +191,7 @@ function renderOverview(o) {
 }
 async function loadOverview() {
   const previousRun=state.overview?.runs?.[0];const o=await api('/api/overview');
-  const changed=state.wasCollecting&&!o.collecting || o.runs[0]?.finished_at!==previousRun?.finished_at;
+  const changed=state.wasCollecting&&!o.collecting || o.runs[0]?.finished_at!==previousRun?.finished_at || o.publication?.edition?.id!==state.overview?.publication?.edition?.id;
   state.overview=o;renderOverview(o);state.wasCollecting=o.collecting;
   if(changed){await loadJobs();if(!$('settings').hidden)await loadSources();}
 }
@@ -148,6 +211,8 @@ async function loadSources() {
   $('unsupported').replaceChildren();for(const s of data.unsupported)$('unsupported').append(el('p',`${s.name}: ${s.reason}`));
 }
 async function start() { const session=await api('/api/session');$('app').hidden=!session.authenticated;$('login').hidden=session.authenticated;if(session.authenticated){$('sign-out').hidden=!session.password_required;await loadOverview();await loadJobs();} }
+$('edition-select').addEventListener('change',()=>action(async()=>{state.editionId=$('edition-select').value;await loadJobs();}));
+$('publication-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const [hour,minute]=$('publication-time').value.split(':').map(Number);await api('/api/publication/preferences',{method:'POST',body:JSON.stringify({hour,minute,strict_cohort:$('strict-cohort').checked})});await loadOverview();await loadJobs();message('Publication settings saved for future editions. Published editions stay fixed.');});});
 $('login-form').addEventListener('submit',async event=>{event.preventDefault();$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({password:$('password').value})});$('password').value='';await start();}catch(e){$('login-error').textContent=e.message;}});
 $('refresh').addEventListener('click',()=>action(async()=>{$('refresh').disabled=true;try{await api('/api/refresh',{method:'POST'});message('Refresh started. You can keep browsing while sources are checked.');setTimeout(()=>action(loadOverview),500);}finally{setTimeout(()=>action(loadOverview),2000);}}));
 $('settings-button').addEventListener('click',()=>action(async()=>{$('settings').hidden=!$('settings').hidden;$('settings-button').setAttribute('aria-expanded',String(!$('settings').hidden));if(!$('settings').hidden)await loadSources();}));

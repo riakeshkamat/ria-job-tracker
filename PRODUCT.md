@@ -10,7 +10,7 @@ A 2027 computer science graduate seeking US software engineering and related ent
 
 ## Product Purpose
 
-Save the time spent searching multiple job sources. Find many relevant openings, preserve direct application links, and let the user decide whether their skills or interests match. Never use resume matching to hide jobs.
+Save the time spent searching multiple job sources. Publish one fixed daily edition at 6:30 PM Eastern, with up to 50 recently published employer postings that satisfy US location, zero-experience entry-level, and work-authorization rules. Allow clear entry-level postings with unstated start dates, label uncertainty, preserve application links, and let the user decide whether their skills or interests match. Never use resume matching to hide jobs.
 
 ## Brand Personality
 
@@ -24,7 +24,9 @@ Decorative dashboards, promotional content, match scores, unnecessary onboarding
 
 - Applying is the primary action.
 - Separate evidence from assumptions.
-- Preserve uncertain openings for review.
+- Hold unclear dates and entry-level evidence in a separate review queue. Never pad an edition to reach 50.
+- Applied and skipped jobs leave the edition immediately, without replacement. Published membership stays fixed; newly discovered disqualifying evidence can withdraw a job.
+- Never relabel discovery or update time as original publication time.
 - Make source failures and stale data visible.
 - Keep collection working without AI access.
 - Require positive US location evidence in the main views; hold ambiguous geography in audit views.

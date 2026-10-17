@@ -63,9 +63,43 @@ class Database:
             for name,definition in [('role_family',"TEXT NOT NULL DEFAULT 'software'"),
                                     ('work_model',"TEXT NOT NULL DEFAULT 'unknown'"),
                                     ('early_career','INTEGER NOT NULL DEFAULT 0'),
-                                    ('cohort_2027','INTEGER NOT NULL DEFAULT 0')]:
+                                    ('cohort_2027','INTEGER NOT NULL DEFAULT 0'),
+                                    ('posted_kind',"TEXT NOT NULL DEFAULT 'unknown'"),
+                                    ('employment_type',"TEXT NOT NULL DEFAULT ''"),
+                                    ('employer_level',"TEXT NOT NULL DEFAULT ''")]:
                 if name not in fields:c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
             c.execute('CREATE INDEX IF NOT EXISTS us_feed ON jobs(location_status,in_scope,status,first_seen)')
+            c.executescript('''
+                CREATE TABLE IF NOT EXISTS editions (
+                    id TEXT PRIMARY KEY, cutoff TEXT UNIQUE NOT NULL, window_start TEXT NOT NULL,
+                    published_at TEXT NOT NULL, policy_version INTEGER NOT NULL, strict_cohort INTEGER NOT NULL,
+                    total INTEGER NOT NULL, report TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS edition_items (
+                    edition_id TEXT NOT NULL REFERENCES editions(id), job_id TEXT NOT NULL REFERENCES jobs(id),
+                    position INTEGER NOT NULL, identity_key TEXT UNIQUE NOT NULL, snapshot TEXT NOT NULL,
+                    PRIMARY KEY(edition_id,job_id), UNIQUE(job_id));
+                CREATE TABLE IF NOT EXISTS job_decisions (
+                    identity_key TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id),
+                    status TEXT NOT NULL, decided_at TEXT NOT NULL);
+            ''')
+
+    def refresh_seniority_rules(self, start_date):
+        if self.get('seniority_rules_version')==2:return
+        with self.connect() as c:
+            cursor=c.execute('SELECT id,title,description,location,country,work_model,board_provider,verified_at,posted_at,posted_kind FROM jobs')
+            reviewed=0
+            while rows:=cursor.fetchmany(100):
+                for row in rows:
+                    result=classify(row['title'],row['description'],row['location'],row['country'],start_date)
+                    attrs=job_attributes(row['title'],row['location'],row['work_model'])
+                    kind='employer_publication' if row['board_provider'] in {'ashby','greenhouse','recruitee'} and row['verified_at'] and row['posted_at'] else row['posted_kind']
+                    c.execute('UPDATE jobs SET in_scope=?,scope_reasons=?,min_years=?,early_career=?,cohort_2027=?,posted_kind=? WHERE id=?',
+                              (result['in_scope'],json.dumps(result['scope_reasons']),result['min_years'],attrs['early_career'],attrs['cohort_2027'],kind,row['id']))
+                    reviewed+=1
+                    if row['verified_at']:
+                        c.execute('UPDATE jobs SET sponsorship=?,evidence=? WHERE id=?',(result['sponsorship'],json.dumps(result['evidence']),row['id']))
+            c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('seniority_rules_version','2'))
+            c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('seniority_migration',json.dumps({'at':now(),'reviewed':reviewed})))
 
     def refresh_location_rules(self, start_date):
         """Reclassify stored locations before serving the updated feed; retain user history."""
@@ -251,6 +285,17 @@ class Database:
                                   first_seen=ts, last_seen=ts, verified_at=ts if authoritative else None,
                                   **result, availability='open' if authoritative else 'unverified')
                     values.update(job_attributes(job['title'],job.get('location',''),job.get('work_model','')))
+                    values['posted_kind']=job.get('posted_kind','unknown')
+                    values['employment_type']=job.get('employment_type') or ''
+                    values['employer_level']=job.get('employer_level') or ''
+                    # Republish/update dates must never make a known old opening fresh again.
+                    if existing and existing['posted_at'] and (authoritative and existing['verified_at'] or not authoritative):
+                        from .editions import timestamp
+                        previous,current=timestamp(existing['posted_at']),timestamp(values['posted_at'])
+                        old_day=existing['posted_at'][:10]
+                        older_calendar_day=bool(current and len(old_day)==10 and old_day[4]=='-' and old_day[7]=='-' and old_day<current.date().isoformat())
+                        if not current or previous and previous<current or older_calendar_day:
+                            values['posted_at'],values['posted_kind']=existing['posted_at'],existing['posted_kind']
                     from .sources import board_from_url
                     values['board_provider'],values['board_slug']=board_from_url(url) or ('','')
                     values['scope_reasons'] = json.dumps(result['scope_reasons'])
@@ -282,7 +327,7 @@ class Database:
                 c.execute('''UPDATE jobs SET availability='closed' WHERE id IN
                     (SELECT job_id FROM sightings WHERE source_id=? AND misses>=2)
                     AND NOT EXISTS(SELECT 1 FROM sightings s JOIN sources p ON p.id=s.source_id
-                    WHERE s.job_id=jobs.id AND p.enabled=1 AND p.provider IN ('greenhouse','ashby','lever','recruitee') AND s.misses<2)''', (source['id'],))
+                    WHERE s.job_id=jobs.id AND p.enabled=1 AND p.provider IN ('greenhouse','ashby','lever','recruitee','smartrecruiters') AND s.misses<2)''', (source['id'],))
             c.execute('UPDATE sources SET last_attempt=?,last_success=?,last_error=NULL,job_count=? WHERE id=?', (ts,ts,len(jobs),source['id']))
             c.execute('INSERT INTO checks(run_id,source_id,checked_at,status,job_count) VALUES(?,?,?,?,?)', (run_id,source['id'],ts,'success',len(jobs)))
         return new_count
@@ -347,3 +392,83 @@ class Database:
     def runs(self):
         with self.connect() as c:
             return [dict(r) for r in c.execute('SELECT * FROM runs ORDER BY started_at DESC LIMIT 15')]
+
+    def decide(self, job_id, updates):
+        from .editions import identity
+        with self.connect() as c:
+            row=c.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if not row:return False
+            c.execute('UPDATE jobs SET '+','.join(k+'=?' for k in updates)+' WHERE id=?',list(updates.values())+[job_id])
+            if 'status' in updates:
+                key=identity(dict(row))
+                if updates['status'] in {'applied','interview','offer','rejected','dismissed'}:
+                    c.execute('INSERT OR REPLACE INTO job_decisions VALUES(?,?,?,?)',(key,job_id,updates['status'],now()))
+                else:c.execute('DELETE FROM job_decisions WHERE identity_key=? AND job_id=?',(key,job_id))
+        return True
+
+    def publish_edition(self, cutoff, start_date, strict_cohort=False, timezone_name='America/New_York'):
+        from .editions import eligibility,identity,timestamp,CAP,POLICY_VERSION
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        end=cutoff.astimezone(timezone.utc)
+        begin=(end.astimezone(ZoneInfo(timezone_name))-timedelta(days=1)).astimezone(timezone.utc)
+        day_start=end.astimezone(ZoneInfo(timezone_name)).replace(hour=0,minute=0,second=0,microsecond=0)
+        day_end=day_start+timedelta(days=1)
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            existing=c.execute('SELECT id FROM editions WHERE julianday(cutoff)>=julianday(?) AND julianday(cutoff)<julianday(?)',
+                               (day_start.astimezone(timezone.utc).isoformat(),day_end.astimezone(timezone.utc).isoformat())).fetchone()
+            if existing:return existing['id']
+            seen={r[0] for r in c.execute('SELECT identity_key FROM edition_items UNION SELECT identity_key FROM job_decisions')}
+            published_ids={r[0] for r in c.execute('SELECT job_id FROM edition_items')}
+            seen.update(identity(dict(r)) for r in c.execute("SELECT * FROM jobs WHERE status IN ('applied','interview','offer','rejected','dismissed')"))
+            rows=c.execute("SELECT * FROM jobs WHERE in_scope=1 AND location_status='us' AND status IN ('new','saved') AND availability='open' AND sponsorship NOT IN ('restricted','conflict') AND posted_at IS NOT NULL AND verified_at IS NOT NULL AND julianday(posted_at)>julianday(?) AND julianday(posted_at)<=julianday(?)",(begin.isoformat(),end.isoformat())).fetchall()
+            report={'date_or_provenance_unconfirmed':0,'outside_window':0,'eligibility_unconfirmed':0,'already_seen':0,'eligible':0}
+            candidates=[]
+            for row in rows:
+                job=dict(row);posted=timestamp(job['posted_at']);verified=timestamp(job['verified_at']);found=timestamp(job['first_seen'])
+                if not posted or job['posted_kind']!='employer_publication':
+                    report['date_or_provenance_unconfirmed']+=1;continue
+                if not (begin<posted<=end) or not found or found>end or not verified or not begin<=verified<=end:
+                    report['outside_window']+=1;continue
+                key=identity(job)
+                if key in seen or job['id'] in published_ids:report['already_seen']+=1;continue
+                decision=eligibility(job,start_date,strict_cohort)
+                if not decision['eligible']:report['eligibility_unconfirmed']+=1;continue
+                job['eligibility']=decision
+                candidates.append((job,key,posted))
+            candidates.sort(key=lambda x:(not x[0]['eligibility']['cohort_confirmed'],x[0]['sponsorship']!='supported',-x[2].timestamp(),x[0]['canonical_url']))
+            chosen=[]
+            for job,key,posted in candidates:
+                if key in seen:continue
+                seen.add(key);report['eligible']+=1
+                if len(chosen)<CAP:chosen.append((job,key))
+            edition_id=str(uuid.uuid4())
+            source_counts=dict(c.execute("SELECT coalesce(sum(enabled=1),0) enabled,coalesce(sum(enabled=1 AND last_error IS NOT NULL),0) failed,coalesce(sum(enabled=1 AND last_success>=? AND last_error IS NULL),0) checked_in_window FROM sources WHERE provider!='manual'",(begin.isoformat(),)).fetchone())
+            # Freeze coverage alongside the jobs, even if the crawl is still in progress.
+            report['collection_running']=bool(c.execute("SELECT 1 FROM runs WHERE status='running'").fetchone())
+            report['source_summary']=source_counts
+            c.execute('INSERT INTO editions VALUES(?,?,?,?,?,?,?,?)',(edition_id,end.isoformat(),begin.isoformat(),now(),POLICY_VERSION,int(strict_cohort),len(chosen),json.dumps(report)))
+            for position,(job,key) in enumerate(chosen,1):
+                for field in ('scope_reasons','evidence','ai_review'):
+                    job[field]=json.loads(job[field]) if job[field] else None
+                job['us_location']=us_location_label(job['location'],job['country'],job['work_model'])
+                job['sources']=[dict(s) for s in c.execute('SELECT p.name,p.provider,p.last_success,p.last_error,s.last_seen,s.misses FROM sightings s JOIN sources p ON p.id=s.source_id WHERE s.job_id=?',(job['id'],))]
+                c.execute('INSERT INTO edition_items VALUES(?,?,?,?,?)',(edition_id,job['id'],position,key,json.dumps(job)))
+            return edition_id
+
+    def edition(self, edition_id='', start_date='2027-06-01', summary=False):
+        from .editions import eligibility
+        with self.connect() as c:
+            editions=[dict(r) for r in c.execute('SELECT id,cutoff,window_start,published_at,total FROM editions ORDER BY cutoff DESC LIMIT 60')]
+            row=c.execute('SELECT * FROM editions WHERE id=?',(edition_id,)).fetchone() if edition_id else c.execute('SELECT * FROM editions ORDER BY cutoff DESC LIMIT 1').fetchone()
+            if not row:return {'edition':None,'editions':editions,'jobs':[],'total':0,'handled':0,'withdrawn':0}
+            edition=dict(row);edition['report']=json.loads(edition['report']);jobs=[];handled=withdrawn=0
+            if summary:return {'edition':edition,'editions':editions}
+            for item in c.execute('SELECT i.identity_key,i.snapshot,i.position,j.* FROM edition_items i JOIN jobs j ON j.id=i.job_id WHERE i.edition_id=? ORDER BY i.position',(edition['id'],)):
+                if item['status'] not in {'new','saved'} or c.execute('SELECT 1 FROM job_decisions WHERE identity_key=?',(item['identity_key'],)).fetchone():
+                    handled+=1;continue
+                if not item['in_scope'] or item['sponsorship'] in {'restricted','conflict'} or item['availability']=='closed' or item['location_status']!='us' or not eligibility(dict(item),start_date,bool(edition['strict_cohort']))['eligible']:
+                    withdrawn+=1;continue
+                job=json.loads(item['snapshot']);job.update(status=item['status'],notes=item['notes'],edition_position=item['position']);jobs.append(job)
+            return {'edition':edition,'editions':editions,'jobs':jobs,'total':len(jobs),'handled':handled,'withdrawn':withdrawn}

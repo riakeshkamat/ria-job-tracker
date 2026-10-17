@@ -14,8 +14,8 @@ Native system sans serif. Body and rows 14px, secondary metadata 11–12px, head
 
 ## Layout
 
-One main column with a compact header, one-line refresh status, Jobs / Saved / Applications tabs, and a five-column semantic table. Search, role, sponsorship, and discovery-time filters are visible; work arrangement, required experience, graduate cohort, application status, and recent employer verification expand under More filters. Source counts, Plus controls, and audit views are inside Settings. Found date and experience sit under the role rather than in extra columns. Compact rows show US location options; details preserve the original source text. Smaller screens wrap filters and retain a horizontally scrollable table.
+One main column with a compact header, Daily edition / Saved / Applications tabs, a publication date and 6:30 PM Eastern window, and remaining / handled counts. The homepage contains at most 50 frozen postings. Search, role, and sponsorship are the only visible edition filters. Older editions are selectable. Additional filters and the uncertain discovery queue live outside the daily edition. Source health, collection controls, Plus settings, and cutoff preferences live in Settings. On small screens semantic job rows become stacked entries with Apply and decision controls visible without horizontal scrolling.
 
 ## Interaction
 
-Native controls, visible keyboard focus, descriptive labels, and live status text. No decorative motion, charts, imagery, modals, or notification subscriptions. Opening an application never changes its status automatically.
+Native controls, visible keyboard focus, descriptive labels, and live status text. No decorative motion, charts, imagery, modals, or notification subscriptions. Opening an application reveals Did you apply? with Yes, applied and No, skip. Only an explicit decision changes status and removes the job. Applied and Skip buttons also work directly. Application history and notes survive refreshes, and a status can be restored from history/audit views. No replacement jobs are added after a decision.

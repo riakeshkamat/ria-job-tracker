@@ -118,7 +118,9 @@ class Collector:
     async def loop(self, enrich=None):
         while True:
             try:
-                if schedule_due(self.db.get('last_schedule_attempt'),datetime.now(timezone.utc),self.config.hour,self.config.timezone):
+                last=self.db.get('last_schedule_attempt')
+                interval_due=not last or datetime.now(timezone.utc)-datetime.fromisoformat(last)>=timedelta(hours=self.config.collection_interval)
+                if interval_due or schedule_due(last,datetime.now(timezone.utc),self.config.hour,self.config.timezone):
                     result = await self.run()
                     if result and enrich:
                         await enrich()

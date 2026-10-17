@@ -9,10 +9,10 @@ from urllib.parse import unquote, urlsplit, urlencode
 import httpx
 from bs4 import BeautifulSoup
 
-from .domain import canonical_url, plain, ROLE
+from .domain import canonical_url, plain, ROLE, SENIOR
 from .catalog import DIRECTORIES, parse_directory
 
-ATS = {'greenhouse', 'ashby', 'lever', 'recruitee'}
+ATS = {'greenhouse', 'ashby', 'lever', 'recruitee', 'smartrecruiters'}
 AGGREGATORS = {'remotive', 'jobicy', 'himalayas'}
 PROVIDERS = ATS | AGGREGATORS | {'github', 'directory'}
 
@@ -39,6 +39,7 @@ def board_from_url(url):
         provider = ('greenhouse' if host in {'boards.greenhouse.io','job-boards.greenhouse.io'} else
                     'ashby' if host == 'jobs.ashbyhq.com' else
                     'lever' if host == 'jobs.lever.co' else None)
+        if host in {'jobs.smartrecruiters.com','www.smartrecruiters.com'}:provider='smartrecruiters'
         if host.endswith('.recruitee.com') and host.count('.') == 2:
             token = host.split('.')[0]
             validate_source('recruitee', token)
@@ -67,7 +68,7 @@ class Fetcher:
         # Public Lever API requests must be at least one second apart, including
         # pagination and retries. Other shared hosts get at most four per second.
         interval = 1.05 if host == 'api.lever.co' else .27 if host in {
-            'boards-api.greenhouse.io', 'api.ashbyhq.com', 'raw.githubusercontent.com'
+            'boards-api.greenhouse.io', 'api.ashbyhq.com', 'raw.githubusercontent.com', 'api.smartrecruiters.com'
         } else 1.1 if host in {'jobicy.com','himalayas.app','remotive.com'} else .1
         lock = self.gates.setdefault(host, asyncio.Lock())
         async with lock:
@@ -108,6 +109,27 @@ class Fetcher:
             return await asyncio.to_thread(parser,response.text,source['name']), []
         if provider in AGGREGATORS:
             return await self.aggregate(provider), []
+        if provider == 'smartrecruiters':
+            rows=[]
+            for page in range(100):
+                data=(await self.get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100&offset={page*100}&country=us')).json()
+                if not isinstance(data,dict) or not isinstance(data.get('content'),list) or not isinstance(data.get('totalFound'),int):
+                    raise ValueError('SmartRecruiters schema changed; snapshot rejected')
+                batch=data['content'];rows.extend(batch)
+                if len(rows)>=data['totalFound']:break
+                if not batch:raise ValueError('Incomplete SmartRecruiters snapshot')
+            else:raise ValueError('SmartRecruiters pagination limit reached')
+            jobs=[]
+            for row in rows:
+                if ROLE.search(row['name']) and not SENIOR.search(row['name']):
+                    # Construct the endpoint; never follow arbitrary URLs from a feed.
+                    identifier=str(row['id'])
+                    if not identifier.isdigit():raise ValueError('Invalid SmartRecruiters posting ID')
+                    row=(await self.get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings/{identifier}')).json()
+                    if not isinstance(row.get('jobAd',{}).get('sections'),dict):
+                        raise ValueError('SmartRecruiters description missing; snapshot rejected')
+                jobs.append(smartrecruiters(row,source))
+            return jobs,[]
         if provider == 'greenhouse':
             data = (await self.get(f'https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true')).json()
             if not isinstance(data,dict) or not isinstance(data.get('jobs'),list):
@@ -176,7 +198,7 @@ def greenhouse(j, source):
                 location=(j.get('location') or {}).get('name',''), country='',
                 description=plain(html.unescape(j.get('content',''))), apply_url=j['absolute_url'],
                 # updated_at is NOT the original posting date.
-                posted_at=j.get('first_published'))
+                posted_at=j.get('first_published'),posted_kind='employer_publication')
 
 
 def ashby(j,source):
@@ -188,7 +210,8 @@ def ashby(j,source):
     return dict(external_id=j.get('id') or j['jobUrl'], title=j['title'], company=source['name'],
                 location=' · '.join(x for x in locations if x),country=country,
                 description=j.get('descriptionPlain') or plain(j.get('descriptionHtml','')),
-                apply_url=j.get('applyUrl') or j['jobUrl'], posted_at=j.get('publishedAt'),work_model=j.get('workplaceType',''))
+                apply_url=j.get('applyUrl') or j['jobUrl'], posted_at=j.get('publishedAt'),posted_kind='employer_publication',
+                work_model=j.get('workplaceType',''),employment_type=j.get('employmentType',''))
 
 
 def lever(j,source):
@@ -198,7 +221,7 @@ def lever(j,source):
     description += '\n' + plain(j.get('additional',''))
     return dict(external_id=j['id'], title=j['text'], company=source['name'], location=categories.get('location') or '',
                 country=j.get('country') or '', description=description, apply_url=j.get('applyUrl') or j['hostedUrl'],
-                posted_at=None,work_model=j.get('workplaceType',''))
+                posted_at=None,work_model=j.get('workplaceType',''),employer_level=categories.get('level',''))
 
 
 def recruitee(j,source):
@@ -208,8 +231,22 @@ def recruitee(j,source):
     location = ' · '.join(', '.join(str(x[k]) for k in ('city','state','country') if x.get(k)) for x in locations) or j.get('location','')
     return dict(external_id=str(j['id']),title=j['title'],company=j.get('company_name') or source['name'],
                 location=location,country=country,description=plain(j.get('description',''))+'\n'+plain(j.get('requirements','')),
-                apply_url=j.get('careers_apply_url') or j['careers_url'],posted_at=j.get('published_at'),
+                apply_url=j.get('careers_apply_url') or j['careers_url'],posted_at=j.get('published_at'),posted_kind='employer_publication',
                 work_model='hybrid' if j.get('hybrid') else 'remote' if j.get('remote') else 'onsite' if j.get('on_site') else '')
+
+
+def smartrecruiters(j,source):
+    location=j.get('location') or {};sections=(j.get('jobAd') or {}).get('sections') or {}
+    identifier=str(j['id'])
+    if not identifier.isdigit():raise ValueError('Invalid SmartRecruiters posting ID')
+    return dict(external_id=identifier,title=j['name'],company=(j.get('company') or {}).get('name') or source['name'],
+                location=location.get('fullLocation') or ', '.join(location[k] for k in ('city','region','country') if location.get(k)),
+                country=location.get('country','').upper(),description='\n'.join(plain(x.get('text','')) for x in sections.values()),
+                apply_url=j.get('applyUrl') or f"https://jobs.smartrecruiters.com/{source['slug']}/{identifier}",
+                posted_at=j.get('releasedDate'),posted_kind='employer_publication',
+                employer_level=(j.get('experienceLevel') or {}).get('label',''),
+                employment_type='FullTime' if (j.get('typeOfEmployment') or {}).get('label')=='Full-time' else (j.get('typeOfEmployment') or {}).get('label',''),
+                work_model='hybrid' if location.get('hybrid') else 'remote' if location.get('remote') else 'onsite')
 
 
 def aggregate_job(j,provider):
@@ -272,7 +309,9 @@ def parse_github(markdown, source_name):
         cells = [c.strip() for c in line.strip().strip('|').split('|')]
         if len(cells)<4 or re.fullmatch(r'[: -]+',cells[0]):
             continue
-        candidates = re.findall(r'\]\((https?://[^\s)]+)\)|href=["\x27](https?://[^"\x27]+)', '|'.join(cells[3:]))
+        # Jobright's public list links the role itself; its website is never fetched.
+        link_cells=cells[1:2] if 'jobright.ai/jobs/' in cells[1] else cells[3:]
+        candidates = re.findall(r'\]\((https?://[^\s)]+)\)|href=["\x27](https?://[^"\x27]+)', '|'.join(link_cells))
         links = [a or b for a,b in candidates]
         link = next((u for u in links if '/apply' in u or board_from_url(u)),next(iter(links),None))
         rows.append(([plain(re.sub(r'\[([^\]]+)\]\([^)]+\)',r'\1',c)) for c in cells],link))
@@ -294,8 +333,9 @@ def parse_github(markdown, source_name):
         if '🛂' in ''.join(cells): annotations.append('Sponsorship eligibility flagged by community list (🛂); employer confirmation required.')
         if '🇺🇸' in ''.join(cells): annotations.append('Community list reports US citizenship restriction; employer confirmation required.')
         # Community annotations are not employer evidence and cannot exclude a job.
-        jobs.append(dict(external_id=url,apply_url=url,title=cells[1],company=company,
-                         location=cells[2],country='',description='\n'.join(annotations),posted_at=None))
+        jobs.append(dict(external_id=url,apply_url=url,title=cells[1].replace('**',''),company=company,
+                         location=cells[2],country='',description='\n'.join(annotations),posted_at=None,
+                         work_model=cells[3] if 'jobright.ai/' in url else ''))
     if not jobs:
         raise ValueError('No recognizable open jobs in GitHub list; layout needs review')
     return jobs

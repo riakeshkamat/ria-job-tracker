@@ -53,14 +53,16 @@ def fingerprint(text):
 
 
 NEGATIVE = [
+    r'\b(?:u\.?s\.?|united states)\s+person\s+(?:is\s+)?required\b',
+    r'\bmust\s+be\s+(?:a\s+)?(?:u\.?s\.?|united states)\s+person\b(?![^.!?]{0,60}\b(?:or|export license)\b)',
     r'\b(?:must|shall|need to)\s+(?:be\s+)?(?:a\s+)?(?:u\.?s\.?|united states)\s+citizen\b',
     r'\b(?:u\.?s\.?|united states)\s+citizenship\s+(?:is\s+)?required\b',
     r'\b(?:u\.?s\.?|united states)\s+citizens?\s+only\b',
     r'\b(?:only|exclusively)\s+(?:open|available)\s+to\s+(?:u\.?s\.?|united states)\s+citizens\b',
     r'\b(?:citizens|citizenship)\s+(?:or|and)\s+(?:permanent residents|permanent residency)\s+only\b',
     r'\b(?:must|need to)\s+be\s+(?:a\s+)?(?:u\.?s\.?\s+)?(?:citizen\s+or\s+)?(?:permanent resident|green card holder)\b',
-    r'\b(?:cannot|can not|unable to|will not|do not|does not|not able to)\s+(?:provide\s+|offer\s+)?(?:visa\s+|immigration\s+)?sponsor(?:ship)?\b',
-    r'\bno\s+(?:(?:visa|immigration|employment)\s+)?sponsorship\b',
+    r'\b(?:cannot|can not|unable to|will not|do not|does not|not able to)\s+(?:provide\s+|offer\s+)?(?:(?:visa|immigration|H[ -]?1B)\s+)?sponsor(?:ship)?\b',
+    r'\bno\s+(?:(?:visa|immigration|employment|H[ -]?1B)\s+)?sponsorship\b',
     r'\bsponsorship\s+(?:is\s+)?(?:not\s+(?:available|offered|provided)|unavailable)\b',
     r'\bwithout\s+(?:the\s+)?(?:need\s+for\s+)?(?:employment\s+|visa\s+|immigration\s+)?sponsorship\b[^.!?]{0,80}\b(?:future|ever)\b',
     r'\b(?:not\s+(?:require|need)|never\s+(?:require|need))\b[^.!?]{0,80}\bsponsorship\b',
@@ -68,12 +70,12 @@ NEGATIVE = [
 ]
 POSITIVE = [
     r'\b(?:visa|immigration)\s+sponsorship\s+(?:is\s+)?(?:available|offered|provided)\b',
-    r'\b(?:we|company|employer)\s+(?:will|can|does)\s+(?:provide\s+|offer\s+)?(?:visa\s+|immigration\s+)?sponsor(?:ship)?\b',
+    r'\b(?:we|company|employer)\s+(?:will|can|does)\s+(?:provide\s+|offer\s+)?(?:(?:visa|immigration|H[ -]?1B)\s+)?sponsor(?:ship)?\b',
     r'\b(?:offer|provide|offers|provides)\s+(?:visa|immigration)\s+sponsorship\b',
 ]
 ROLE = re.compile(r'\b(software|developer|swe|sde|backend|back.end|frontend|front.end|full.?stack|devops|sre|site reliability|data engineer|machine learning|ml engineer|ai engineer|cloud engineer|platform engineer|infrastructure engineer|production engineer|release engineer|forward.deployed engineer|security engineer|test engineer|quality engineer|qa engineer|automation engineer|systems engineer|embedded|firmware|quantitative developer|research engineer|application engineer)\b', re.I)
-EARLY = re.compile(r'\b(new[ -]?(?:college[ -]?)?grad(?:uate)?s?|entry[ -]?level|early[ -]?career|university grad|junior|associate|engineer\s*(?:i|1))\b', re.I)
-SENIOR = re.compile(r'\b(senior|sr\.?|staff|principal|director|lead|manager|engineer\s*(?:iii|iv|[4-9]))\b', re.I)
+EARLY = re.compile(r'\b(new[ -]?(?:college[ -]?)?grad(?:uate)?s?|entry[ -]?level|early[ -]?career|university grad(?:uate)?|graduate|junior|associate|engineer\s*(?:i|1))\b', re.I)
+SENIOR = re.compile(r'\b(senior|sr\.?|staff|principal|director|lead|manager|architect|engineer\s*(?:iii|iv|[4-9]))\b', re.I)
 US_STATES = {'alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah','vermont','virginia','washington','west virginia','wisconsin','wyoming'}
 US_CODES = 'AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split()
 US_CITIES = {'san francisco','san jose','seattle','new york','boston','philadelphia','austin','chicago','palo alto','mountain view','sunnyvale','los angeles','san diego','santa clara','denver','atlanta','pittsburgh','washington dc','redmond','bellevue','menlo park','irvine'}
@@ -134,13 +136,13 @@ ROLE_FAMILIES={
 
 
 def job_attributes(title, location='', work_model=''):
-    model=(work_model or '').lower().replace('-','').replace('_','')
+    model=(work_model or '').lower().replace('-','').replace('_','').replace(' ','')
     if model not in {'remote','hybrid','onsite'}:
         match=re.search(r'\bhybrid\b',location or '',re.I) or re.search(r'\b(remote|on[ -]?site)\b',location or '',re.I)
         model=match.group(0).lower().replace('-','').replace(' ','') if match else 'unknown'
     return {'role_family':next(k for k,p in ROLE_FAMILIES.items() if re.search(p,title,re.I)),
-            'work_model':model,'early_career':int(bool(EARLY.search(title))),
-            'cohort_2027':int(bool(re.search(r'\b2027\b',title) and EARLY.search(title)))}
+            'work_model':model,'early_career':int(bool(EARLY.search(title)) and not SENIOR.search(title)),
+            'cohort_2027':int(bool(re.search(r'\b2027\b',title) and EARLY.search(title)) and not SENIOR.search(title))}
 
 
 def us_location_label(location, country='', work_model='unknown'):
@@ -169,10 +171,13 @@ def classify(title, description, location='', country='', start_date='2027-06-01
     if not ROLE.search(title):
         scope = False
         reasons.append('Outside software and related engineering titles')
+    if re.search(r'\bfront[ -]?end\b',title,re.I) and not re.search(r'\b(?:software|engineer|developer|programmer|swe|sde)\b',title,re.I):
+        scope=False
+        reasons.append('Front-end title does not identify a software engineering occupation')
     if re.search(r'\b(land developer|property developer|mechanical|fluids|civil engineer|manufacturing.*quality|quality.*manufacturing)\b', title,re.I) and not re.search(r'software|firmware|embedded|automation',title,re.I):
         scope = False
         reasons.append('Explicit engineering specialty outside software-related roles')
-    if SENIOR.search(title) and not EARLY.search(title):
+    if SENIOR.search(title):
         scope = False
         reasons.append('Explicit seniority outside entry level')
     if re.search(r'\b(interns?|internships?|co-op)\b', title, re.I):
@@ -185,7 +190,7 @@ def classify(title, description, location='', country='', start_date='2027-06-01
         if not re.search(r'preferred|nice.to.have|bonus|desirable', context, re.I):
             years.append(int(m.group(1)))
     min_years = min(years) if years else None
-    if min_years is not None and min_years > 3 and not EARLY.search(title):
+    if min_years is not None and min_years > 3:
         scope = False
         reasons.append(f'Requires at least {min_years} years of experience')
     if min_years is None and not EARLY.search(title):

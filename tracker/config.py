@@ -14,6 +14,10 @@ class Config:
     timezone: str = os.getenv('DAILY_TIMEZONE', 'America/New_York')
     start_date: str = os.getenv('START_DATE', '2027-06-01')
     ai_limit: int = int(os.getenv('CHATGPT_DAILY_LIMIT', '30'))
+    publication_hour: int = int(os.getenv('PUBLICATION_HOUR', '18'))
+    publication_minute: int = int(os.getenv('PUBLICATION_MINUTE', '30'))
+    strict_cohort: bool = os.getenv('STRICT_2027_COHORT', 'false').lower() == 'true'
+    collection_interval: int = int(os.getenv('COLLECTION_INTERVAL_HOURS', '2'))
 
     def prepare(self):
         if self.production and (len(self.password) < 12 or len(self.secret) < 32):
@@ -28,6 +32,8 @@ class Config:
             self.secret = path.read_text().strip()
         if not 0 <= self.hour <= 23:
             raise ValueError('DAILY_HOUR must be between 0 and 23')
+        if not 0<=self.publication_hour<=23 or not 0<=self.publication_minute<=59 or not 1<=self.collection_interval<=24:
+            raise ValueError('Invalid publication cutoff or collection interval')
         from zoneinfo import ZoneInfo
         ZoneInfo(self.timezone)
 

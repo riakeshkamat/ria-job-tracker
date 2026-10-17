@@ -19,6 +19,7 @@ def parse_directory(text, slug):
             raise ValueError('Employer directory schema changed')
         for provider in sorted(ATS):
             entry = data['providers'].get(provider)
+            if provider=='smartrecruiters' and entry is None:continue
             if not isinstance(entry, dict) or not isinstance(entry.get('live'), list):
                 raise ValueError('Employer directory is missing a supported platform')
             for row in entry['live']:

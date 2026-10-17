@@ -148,5 +148,30 @@
     "provider": "himalayas",
     "slug": "us-engineering",
     "name": "Himalayas"
+  },
+  {
+    "provider": "smartrecruiters",
+    "slug": "ServiceNow",
+    "name": "ServiceNow"
+  },
+  {
+    "provider": "smartrecruiters",
+    "slug": "WesternDigital",
+    "name": "Western Digital"
+  },
+  {
+    "provider": "smartrecruiters",
+    "slug": "BoschGroup",
+    "name": "Bosch"
+  },
+  {
+    "provider": "github",
+    "slug": "jobright-ai/2026-Software-Engineer-New-Grad",
+    "name": "Jobright public SWE list"
+  },
+  {
+    "provider": "github",
+    "slug": "jobright-ai/2026-Engineering-New-Grad",
+    "name": "Jobright public engineering list"
   }
 ]
