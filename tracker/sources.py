@@ -4,21 +4,29 @@ import html
 import json
 import re
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlencode
 
 import httpx
 from bs4 import BeautifulSoup
 
-from .domain import canonical_url, plain
+from .domain import canonical_url, plain, ROLE
+from .catalog import DIRECTORIES, parse_directory
 
-PROVIDERS = {'greenhouse', 'ashby', 'lever', 'github'}
-ATS = PROVIDERS - {'github'}
+ATS = {'greenhouse', 'ashby', 'lever', 'recruitee'}
+AGGREGATORS = {'remotive', 'jobicy', 'himalayas'}
+PROVIDERS = ATS | AGGREGATORS | {'github', 'directory'}
 
 
 def validate_source(provider, slug):
     if provider not in PROVIDERS:
-        raise ValueError('Choose Greenhouse, Ashby, Lever, or GitHub')
-    pattern = r'[\w.-]+/[\w.-]+' if provider == 'github' else r'[\w.-]+'
+        raise ValueError('Unknown source platform')
+    if provider == 'directory':
+        if slug not in DIRECTORIES: raise ValueError('Unknown employer directory')
+        return
+    if provider in AGGREGATORS:
+        if slug != 'us-engineering': raise ValueError('Choose the US engineering feed')
+        return
+    pattern = r'[\w.-]+/[\w.-]+(?:/[\w.-]+)*' if provider == 'github' else r'[\w.-]+'
     if not re.fullmatch(pattern, slug, flags=re.ASCII) or '..' in slug:
         raise ValueError('Invalid employer board identifier or owner/repository')
 
@@ -31,6 +39,10 @@ def board_from_url(url):
         provider = ('greenhouse' if host in {'boards.greenhouse.io','job-boards.greenhouse.io'} else
                     'ashby' if host == 'jobs.ashbyhq.com' else
                     'lever' if host == 'jobs.lever.co' else None)
+        if host.endswith('.recruitee.com') and host.count('.') == 2:
+            token = host.split('.')[0]
+            validate_source('recruitee', token)
+            return 'recruitee', token
         if provider and parts:
             if provider=='greenhouse' and parts[0]=='embed':
                 from urllib.parse import parse_qs
@@ -47,10 +59,26 @@ def board_from_url(url):
 class Fetcher:
     def __init__(self, client):
         self.client = client
+        self.gates = {}
+        self.next_request = {}
+
+    async def pace(self, url):
+        host = urlsplit(url).hostname
+        # Public Lever API requests must be at least one second apart, including
+        # pagination and retries. Other shared hosts get at most four per second.
+        interval = 1.05 if host == 'api.lever.co' else .27 if host in {
+            'boards-api.greenhouse.io', 'api.ashbyhq.com', 'raw.githubusercontent.com'
+        } else 1.1 if host in {'jobicy.com','himalayas.app','remotive.com'} else .1
+        lock = self.gates.setdefault(host, asyncio.Lock())
+        async with lock:
+            loop = asyncio.get_running_loop()
+            await asyncio.sleep(max(0, self.next_request.get(host, 0) - loop.time()))
+            self.next_request[host] = loop.time() + interval
 
     async def get(self, url):
         for attempt in range(3):
             try:
+                await self.pace(url)
                 response = await self.client.get(url, follow_redirects=False)
                 if response.status_code in (429,500,502,503,504) and attempt < 2:
                     delay = response.headers.get('retry-after', str(2**attempt))
@@ -69,9 +97,17 @@ class Fetcher:
     async def collect(self, source):
         provider, slug = source['provider'],source['slug']
         validate_source(provider,slug)
+        if provider == 'directory':
+            response = await self.get(DIRECTORIES[slug])
+            return [], await asyncio.to_thread(parse_directory, response.text, slug)
         if provider == 'github':
-            response = await self.get(f'https://raw.githubusercontent.com/{slug}/HEAD/README.md')
-            return await asyncio.to_thread(parse_github,response.text,source['name']), []
+            owner, repo, *path = slug.split('/')
+            filename = '/'.join(path) or 'README.md'
+            response = await self.get(f'https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{filename}')
+            parser = parse_community_json if filename.endswith('.json') else parse_github
+            return await asyncio.to_thread(parser,response.text,source['name']), []
+        if provider in AGGREGATORS:
+            return await self.aggregate(provider), []
         if provider == 'greenhouse':
             data = (await self.get(f'https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true')).json()
             if not isinstance(data,dict) or not isinstance(data.get('jobs'),list):
@@ -85,6 +121,11 @@ class Fetcher:
             if not isinstance(data,dict) or not isinstance(data.get('jobs'),list):
                 raise ValueError('Ashby response has changed; snapshot rejected')
             return await asyncio.to_thread(lambda:[ashby(j,source) for j in data['jobs'] if j.get('isListed') is True]), []
+        if provider == 'recruitee':
+            data = (await self.get(f'https://{slug}.recruitee.com/api/offers/')).json()
+            if not isinstance(data,dict) or not isinstance(data.get('offers'),list):
+                raise ValueError('Recruitee response has changed; snapshot rejected')
+            return await asyncio.to_thread(lambda:[recruitee(j,source) for j in data['offers']]), []
         rows = []
         for page in range(100):
             batch = (await self.get(f'https://api.lever.co/v0/postings/{slug}?mode=json&skip={page*100}&limit=100')).json()
@@ -94,6 +135,40 @@ class Fetcher:
             if len(batch)<100:
                 return await asyncio.to_thread(lambda:[lever(j,source) for j in rows]), []
         raise ValueError('Lever pagination limit reached; partial snapshot rejected')
+
+    async def aggregate(self, provider):
+        jobs, seen, cursors = [], set(), set()
+        cursor = None
+        for page in range(1,10001):
+            if provider == 'remotive':
+                url = 'https://remotive.com/api/remote-jobs'  # all categories; related roles may be outside software-dev
+            elif provider == 'jobicy':
+                params = {'count':200}
+                if cursor: params['cursor'] = cursor
+                url = 'https://jobicy.com/api/v2/remote-jobs?' + urlencode(params)
+            else:
+                url = 'https://himalayas.app/jobs/api/search?' + urlencode({
+                    'country':'US','seniority':'Entry-level,Mid-level','sort':'recent','page':page})
+            data = (await self.get(url)).json()
+            rows = data.get('jobs')
+            if not isinstance(rows,list) or data.get('success') is False:
+                raise ValueError(f'{provider} schema changed; snapshot rejected')
+            for row in rows:
+                item = aggregate_job(row,provider)
+                if not ROLE.search(item['title']): continue
+                if item['external_id'] not in seen:
+                    seen.add(item['external_id']); jobs.append(item)
+            if provider == 'remotive' or provider == 'himalayas' and not rows:
+                return jobs
+            if provider == 'jobicy':
+                cursor = data.get('nextCursor')
+                if not cursor:
+                    if data.get('hasMore'): raise ValueError('Jobicy cursor missing; partial feed rejected')
+                    return jobs
+                if not isinstance(cursor,str) or cursor in cursors:
+                    raise ValueError('Jobicy pagination repeated; partial feed rejected')
+                cursors.add(cursor)
+        raise ValueError(f'{provider} pagination limit reached; partial feed rejected')
 
 
 def greenhouse(j, source):
@@ -124,6 +199,59 @@ def lever(j,source):
     return dict(external_id=j['id'], title=j['text'], company=source['name'], location=categories.get('location') or '',
                 country=j.get('country') or '', description=description, apply_url=j.get('applyUrl') or j['hostedUrl'],
                 posted_at=None)
+
+
+def recruitee(j,source):
+    locations = j.get('locations') or []
+    countries = [x.get('country_code') or x.get('country','') for x in locations]
+    country = 'US' if any(c in {'US','USA','United States'} for c in countries) else j.get('country_code') or j.get('country','')
+    location = ' · '.join(', '.join(str(x[k]) for k in ('city','state','country') if x.get(k)) for x in locations) or j.get('location','')
+    return dict(external_id=str(j['id']),title=j['title'],company=j.get('company_name') or source['name'],
+                location=location,country=country,description=plain(j.get('description',''))+'\n'+plain(j.get('requirements','')),
+                apply_url=j.get('careers_apply_url') or j['careers_url'],posted_at=j.get('published_at'))
+
+
+def aggregate_job(j,provider):
+    if provider == 'remotive':
+        return dict(external_id=str(j['id']),title=j['title'],company=j['company_name'],
+                    location=j.get('candidate_required_location',''),country='',description=plain(j.get('description','')),
+                    apply_url=j['url'],posted_at=j.get('publication_date'))
+    if provider == 'jobicy':
+        return dict(external_id=str(j['id']),title=j['jobTitle'],company=j['companyName'],
+                    location=j.get('jobGeo',''),country='',description=plain(j.get('jobDescription','')),
+                    apply_url=j['url'],posted_at=j.get('pubDate'))
+    countries=j.get('locationRestrictions') or []
+    # Preserve the actual country restrictions. Empty means worldwide, not a US-only role.
+    country='US' if any(c in {'US','USA','United States'} for c in countries) else countries[0] if countries else ''
+    from datetime import datetime,timezone
+    posted=j.get('pubDate')
+    if isinstance(posted,(int,float)): posted=datetime.fromtimestamp(posted,timezone.utc).isoformat()
+    return dict(external_id=j['guid'],title=j['title'],company=j['companyName'],
+                location=', '.join(countries) or 'Worldwide remote',country=country,description=plain(j.get('description','')),
+                # Keep the provider's canonical page for attribution and application access.
+                apply_url=j['guid'],posted_at=posted)
+
+
+def parse_community_json(text, source_name):
+    data=json.loads(text)
+    if not isinstance(data,dict) or not isinstance(data.get('jobs'),list):
+        raise ValueError('Community JSON feed schema changed')
+    jobs=[]
+    for row in data['jobs']:
+        if data.get('api_version') == 1:  # Ricsign: only the full-time SWE board
+            if row.get('track') != 'new-grad-swe' or row.get('active') is not True: continue
+            title,company,url=row['title'],row['company_name'],row['apply_url']
+            location=' · '.join(row.get('locations') or [])
+            posted=row.get('posted_at')
+        elif 'updatedAt' in data:  # ApplyGuy: use employer listing, never one-click-apply redirect
+            title,company,url=row['title'],row['company'],row['listingUrl']
+            location,posted=row.get('location',''),row.get('posted')
+        else:
+            raise ValueError('Unrecognized community JSON feed')
+        jobs.append(dict(external_id=canonical_url(url),title=title,company=company,location=location,
+                         country='',description='',apply_url=url,posted_at=posted))
+    if not jobs: raise ValueError('No recognizable open jobs in community JSON feed')
+    return jobs
 
 
 def parse_github(markdown, source_name):

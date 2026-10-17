@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = {view:'feed', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, expanded:new Set(), requestId:0};
+const sourceState={offset:0,total:0,requestId:0};
 const statuses = ['new','saved','applied','interview','offer','rejected','dismissed'];
 const label = x => x.charAt(0).toUpperCase()+x.slice(1);
 function el(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text; if(cls)e.className=cls; return e; }
@@ -80,11 +81,12 @@ async function loadJobs() {
 function renderOverview(o) {
   const latest=o.runs[0];
   let text;
-  if(o.collecting)text='Refreshing configured sources. Previous results remain available.';
+  if(o.collecting)text=`Refreshing · ${latest?.success_count||0}/${o.source_count.toLocaleString()} configured feeds succeeded so far · ${(latest?.new_count||0).toLocaleString()} new records. You can keep browsing.`;
   else if(!latest)text=`Not refreshed yet · ${o.source_count} configured sources`;
   else text=`${latest.status==='success'?'Refresh complete':latest.status==='partial'?'Refresh incomplete':latest.status==='running'?'Refresh interrupted':'Refresh '+latest.status} · ${ago(latest.finished_at||latest.started_at)} · ${latest.success_count}/${latest.source_count} sources checked successfully · ${latest.new_count} new records`;
   if(o.failed_sources)text+=` · ${o.failed_sources} sources need attention`;
   $('refresh-line').textContent=text;$('refresh-line').className='refresh-line'+(o.failed_sources||latest&&latest.status!=='success'?' warning':'');
+  if(o.coverage){const c=o.coverage;$('coverage-line').textContent=`${c.enabled.toLocaleString()} enabled feeds · ${c.recent.toLocaleString()} checked successfully in the last 36 hours · ${c.pending.toLocaleString()} not checked yet · ${c.failed.toLocaleString()} need attention. Coverage is limited to these feeds.`;}
   $('refresh').disabled=o.collecting;$('refresh').textContent=o.collecting?'Refreshing…':'Refresh jobs';
   $('schedule-info').textContent=o.schedule_enabled?`Daily collection enabled. Next scheduled run: ${date(o.next_run,true)}. Missed runs catch up after restart.`:'Daily collection is disabled in this environment. Use Refresh jobs.';
   const p=o.plus;
@@ -100,10 +102,14 @@ async function loadOverview() {
   if(changed){await loadJobs();if(!$('settings').hidden)await loadSources();}
 }
 async function loadSources() {
-  const data=await api('/api/sources');$('sources-body').replaceChildren();
+  const requestId=++sourceState.requestId;
+  const query=new URLSearchParams({search:$('source-search').value,health:$('source-health').value,offset:String(sourceState.offset),limit:'100'});
+  const data=await api('/api/sources?'+query);if(requestId!==sourceState.requestId)return;$('sources-body').replaceChildren();
+  sourceState.total=data.total;
   $('connect-command').textContent=`.venv/bin/python -m tracker.connect --host-id ${data.host_id}`;
-  const failed=data.sources.filter(s=>s.enabled&&s.last_error).length;
-  $('sources-summary').textContent=`Source health · ${data.sources.length} sources · ${failed} need attention`;
+  $('sources-summary').textContent=`Source health · ${data.summary.enabled.toLocaleString()} enabled · ${data.summary.failed.toLocaleString()} need attention`;
+  $('source-page-info').textContent=data.total?`${sourceState.offset+1}–${Math.min(sourceState.offset+100,data.total)} of ${data.total.toLocaleString()} sources`:'No sources match';
+  $('source-previous').disabled=sourceState.offset===0;$('source-next').disabled=sourceState.offset+100>=data.total;
   for(const s of data.sources) {
     const row=el('tr');const name=el('td');name.append(el('strong',s.name),el('div',`${s.provider} / ${s.slug}`,'subtext'));row.append(name,el('td',s.last_success?ago(s.last_success):'Never'),el('td',s.job_count==null?'—':String(s.job_count)),el('td',s.last_error||(!s.last_success?'Not checked':'OK'),s.last_error?'health-error':''));
     const check=el('input');check.type='checkbox';check.checked=!!s.enabled;check.setAttribute('aria-label','Enable '+s.name);check.addEventListener('change',()=>action(async()=>{try{await api('/api/sources/'+s.id,{method:'PATCH',body:JSON.stringify({enabled:check.checked})});await loadOverview();}catch(e){check.checked=!check.checked;throw e;}}));const cell=el('td');cell.append(check);row.append(cell);$('sources-body').append(row);
@@ -121,6 +127,10 @@ for(const id of ['status-filter','sponsorship'])$(id).addEventListener('change',
 $('previous').addEventListener('click',()=>action(async()=>{state.offset=Math.max(0,state.offset-100);await loadJobs();}));
 $('next').addEventListener('click',()=>action(async()=>{state.offset+=100;await loadJobs();}));
 $('source-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{await api('/api/sources',{method:'POST',body:JSON.stringify({provider:$('source-provider').value,slug:$('source-slug').value,name:$('source-name').value})});event.target.reset();await loadSources();await loadOverview();message('Source added. Refresh jobs to collect its listings.');});});
+let sourceSearchTimer;$('source-search').addEventListener('input',()=>{clearTimeout(sourceSearchTimer);sourceSearchTimer=setTimeout(()=>action(async()=>{sourceState.offset=0;await loadSources();}),250);});
+$('source-health').addEventListener('change',()=>action(async()=>{sourceState.offset=0;await loadSources();}));
+$('source-previous').addEventListener('click',()=>action(async()=>{sourceState.offset=Math.max(0,sourceState.offset-100);await loadSources();}));
+$('source-next').addEventListener('click',()=>action(async()=>{sourceState.offset+=100;await loadSources();}));
 $('add-job-button').addEventListener('click',()=>{$('add-job').hidden=!$('add-job').hidden;$('add-job-button').setAttribute('aria-expanded',String(!$('add-job').hidden));if(!$('add-job').hidden)$('add-job').querySelector('input').focus();});
 $('add-job').addEventListener('submit',event=>{event.preventDefault();action(async()=>{await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(event.target)))});event.target.reset();$('add-job').hidden=true;$('add-job-button').setAttribute('aria-expanded','false');state.offset=0;await loadJobs();message('Job added as unverified. Recognized employer boards will be checked on the next refresh.');});});
 $('sign-out').addEventListener('click',()=>action(async()=>{await api('/api/logout',{method:'POST'});await start();}));

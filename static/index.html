@@ -20,13 +20,14 @@
   </header>
   <p class="subtitle">US new-grad &amp; entry-level engineering · 0–3 years · June 2027 onward</p>
   <div class="refresh-line" id="refresh-line" role="status">Checking last refresh…</div>
+  <p id="coverage-line" class="muted" role="status"></p>
   <p id="message" role="status" hidden></p>
   <section id="settings" hidden aria-label="Sources and settings">
     <div class="section-heading"><h2>Sources &amp; settings</h2><button id="close-settings">Close</button></div>
     <div class="settings-columns">
-      <section><h3>Daily collection</h3><p id="schedule-info"></p><p>Employer boards are discovered from GitHub application links. Coverage is limited to the sources listed below. Failed sources retain their previous jobs.</p>
+      <section><h3>Daily collection</h3><p id="schedule-info"></p><p>Public employer directories and five new-grad lists discover career feeds automatically. Remotive, Jobicy, and Himalayas add remote listings. Failed sources retain previous jobs; directory entries count as coverage only after their feeds succeed.</p>
         <details><summary>Add an employer board or GitHub list</summary><form id="source-form" class="stack">
-          <label>Platform<select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="github">GitHub</option></select></label>
+          <label>Platform<select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="recruitee">Recruitee</option><option value="github">GitHub</option></select></label>
           <label>Board identifier or owner/repository<input id="source-slug" placeholder="e.g. stripe" required></label>
           <label>Display name<input id="source-name" placeholder="e.g. Stripe"></label><button type="submit">Add source</button>
         </form></details>
@@ -47,7 +48,12 @@
         <div id="model-controls" hidden><label>Model<select id="model"><option value="">Load available models</option></select></label><button id="load-models">Load models</button><button id="save-model">Use selected model</button><button id="review">Review unclear jobs</button><button id="disconnect">Disconnect</button></div>
       </section>
     </div>
-    <details><summary id="sources-summary">Source health</summary><div class="table-scroll"><table class="source-table"><thead><tr><th>Source</th><th>Last success</th><th>Listings</th><th>Health</th><th>Enabled</th></tr></thead><tbody id="sources-body"></tbody></table></div></details>
+    <details><summary id="sources-summary">Source health</summary>
+      <div class="filters"><label class="search-label"><span class="sr-only">Search sources</span><input id="source-search" type="search" placeholder="Search employers or platforms"></label><label><span class="sr-only">Source health filter</span><select id="source-health"><option value="">All sources</option><option value="enabled">Enabled</option><option value="failed">Needs attention</option><option value="pending">Not checked yet</option></select></label></div>
+      <div class="table-scroll"><table class="source-table"><thead><tr><th>Source</th><th>Last success</th><th>Listings / directory entries</th><th>Health</th><th>Enabled</th></tr></thead><tbody id="sources-body"></tbody></table></div>
+      <div class="list-footer"><span id="source-page-info"></span><div><button id="source-previous">Previous sources</button><button id="source-next">Next sources</button></div></div>
+      <p class="muted">Directory: <a href="https://github.com/veresk06/open-ats-feed" target="_blank" rel="noopener noreferrer">Open ATS Feed</a> (MIT) and <a href="https://github.com/fyrosofttech/lastroundai-hiring-data/tree/main/ats-directory" target="_blank" rel="noopener noreferrer">LastRound AI</a> (CC BY 4.0). Remote listings: <a href="https://remotive.com" target="_blank" rel="noopener noreferrer">Remotive</a>, <a href="https://jobicy.com" target="_blank" rel="noopener noreferrer">Jobicy</a>, <a href="https://himalayas.app" target="_blank" rel="noopener noreferrer">Himalayas</a>.</p>
+    </details>
     <details><summary>Refresh history</summary><div id="run-history"></div></details>
     <div class="settings-footer"><a href="/api/export" download>Export jobs &amp; status</a><button id="sign-out">Sign out</button></div>
   </section>

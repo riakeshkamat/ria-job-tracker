@@ -42,6 +42,8 @@ def canonical_url(value):
     path = p.path.rstrip('/')
     if host in {'jobs.ashbyhq.com','jobs.lever.co'}:
         path = re.sub(r'/(?:apply|application)$','',path)
+    if re.fullmatch(r'/o/[^/]+/c/new',path):
+        path=path[:-6]
     return urlunsplit(('https' if p.scheme == 'https' else 'http', host, path, urlencode(sorted(query)), ''))
 
 

@@ -191,9 +191,9 @@ def create_app(config=default_config,db=None):
         local=datetime.now(timezone.utc).astimezone(ZoneInfo(config.timezone))
         next_run=local.replace(hour=config.hour,minute=0,second=0,microsecond=0)
         if local>=next_run: next_run+=timedelta(days=1)
-        sources=db.sources()
-        return {'runs':runs,'collecting':collector.lock.locked(),'source_count':len([s for s in sources if s['enabled'] and s['provider']!='manual']),
-                'failed_sources':len([s for s in sources if s['enabled'] and s['last_error']]),
+        summary=db.source_summary()
+        return {'runs':runs,'collecting':collector.lock.locked(),'source_count':summary['enabled'],
+                'failed_sources':summary['failed'],'coverage':summary,
                 'last_complete_refresh':db.get('last_complete_refresh'),'schedule_enabled':config.schedule,
                 'next_run':next_run.isoformat(),'start_date':config.start_date,
                 'plus':plus.status()}
@@ -205,8 +205,9 @@ def create_app(config=default_config,db=None):
         return {'ok':True}
 
     @app.get('/api/sources')
-    def sources():
-        return {'sources':[s for s in db.sources() if s['provider']!='manual'],'host_id':db.get('host_id'),
+    def sources(search:str='',health:str='',offset:int=0,limit:int=100):
+        if offset<0 or not 1<=limit<=500: raise HTTPException(400,'Invalid source page')
+        return {**db.source_page(search[:200],health,offset,limit),'summary':db.source_summary(),'host_id':db.get('host_id'),
                 'unsupported':[{'name':'LinkedIn Jobs','reason':'Automated scraping prohibited; add discovered application links manually.'},
                                {'name':'Jobright','reason':'Automated collection restricted; add discovered application links manually.'}]}
 

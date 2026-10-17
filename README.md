@@ -14,8 +14,9 @@ Open http://127.0.0.1:8127. The first scheduled collection catches up on startup
 
 ## What it does
 
-- Reads the documented public Greenhouse, Ashby, and Lever job feeds and two GitHub new-grad lists.
-- Discovers additional employer board identifiers from application URLs on those lists. Source health names every configured board and its last successful refresh.
+- Reads public Greenhouse, Ashby, Lever, and Recruitee employer feeds; five GitHub new-grad lists; and the Remotive, Jobicy, and Himalayas public remote-job feeds.
+- Imports thousands of employer board identifiers from two public directories on every run, as well as application URLs in the lists. New directory entries join the same run. Directory membership is a discovery hint; only a successful live feed check counts as working coverage.
+- Provides searchable, paginated source health, recent successful checks, unattempted feeds, and failures. See [COVERAGE.md](COVERAGE.md) for exact feed scopes, attribution, and gaps.
 - Collects daily at 8am America/New_York by default, handles daylight saving time, and catches up after restarts.
 - Keeps US and unclear-location software roles, explicit new-grad/entry-level roles and requirements whose minimum is up to three years. Unspecified experience stays visible with a verification label. Clearly senior roles, non-US jobs, internships, and explicit pre-2027 cohorts go to Excluded. Explicitly early-career titles take precedence over potentially contradictory experience text.
 - Prioritizes explicit graduate roles above generic roles with unknown experience. No skill, GPA, university, resume, or fit-score filtering.
@@ -28,7 +29,9 @@ Open http://127.0.0.1:8127. The first scheduled collection catches up on startup
 
 This is a monitored-source collector, not exhaustive internet coverage. ATS feeds operate per employer; employers using other systems are discoverable through lists but remain unverified until an appropriate adapter is available. LinkedIn and Jobright are not scraped: their published policies restrict automated collection. Add a discovered application URL manually, or add a recognized employer board in settings.
 
-Collection retries transient network/HTTP failures with bounded backoff, rejects incomplete/changed schemas, and commits each valid source snapshot in a transaction. Failed sources do not remove existing jobs. A job becomes Closed after absence from two successful employer-board snapshots, provided no other employer feed still lists it. An unexpected entirely empty board is flagged for review and does not mass-close prior records. A removed community-list entry alone never proves closure. A 200 response from a board is a source check, not a separate verification of every application form.
+Collection retries transient network/HTTP failures with bounded backoff, rejects incomplete/changed schemas, and commits each valid source snapshot in a transaction. Fixed platform worker pools and one SQLite ingestion writer bound concurrent memory and database writes. Lever requests, including pagination and retries, are spaced at least 1.05 seconds apart; shared Greenhouse/Ashby hosts receive at most four requests per second. The broader crawl can take hours, and existing results stay available while it runs.
+
+Failed sources do not remove existing jobs. A job becomes Closed after absence from two successful employer-board snapshots, provided no other employer feed still lists it. An unexpected entirely empty board is flagged for review and does not mass-close prior records. A removed community-list or remote-feed entry alone never proves closure. Aggregator descriptions are unverified and cannot overwrite an employer's evidence. A 200 response from a board is a source check, not a separate verification of every application form. Newly discovered unrelated job families are not persisted; software-related excluded roles and all existing/manual records remain inspectable.
 
 Posting dates are displayed only when supplied, and a source's update timestamp is not relabeled as an original posting date. First found records when this tracker discovered the job. Start dates are often absent; these remain unverified. ISO-formatted explicit start dates before availability are excluded, but other date phrasing needs human review. Rules are conservative heuristics, not proof of eligibility, and all exclusions remain inspectable. Keep reviewing source failures and a sample of results before relying on the feed.
 
@@ -67,7 +70,7 @@ This implements OpenAI's documented **Sign in with ChatGPT / ChatGPT plan usage*
 
 The default cap is 30 inference attempts per UTC day, reserved before each request, including failed/interrupted attempts. Only new/changed unclear employer descriptions are reviewed. An exact quote must match the stored description, and only a terminal `response.completed` event counts as success. Model advice remains advisory and cannot hide jobs. The app pauses on plan errors; it never substitutes a key or another billing method. This cap controls request count, not exact subscription units. ChatGPT plan usage is shared with other apps.
 
-Plus currently enriches collected descriptions; this version does not run autonomous whole-web searches. Public-source discovery comes from GitHub application links and the editable employer registry. Daily jobs are still collected if Plus is disconnected, rate-limited, or ineligible.
+Plus currently enriches collected descriptions; this version does not run autonomous whole-web searches. Public-source discovery comes from refreshed employer directories, GitHub application links, and the editable employer registry. Daily jobs are still collected if Plus is disconnected, rate-limited, or ineligible.
 
 Official references:
 

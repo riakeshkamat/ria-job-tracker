@@ -4,7 +4,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from .domain import canonical_url, classify, fingerprint
+from .domain import canonical_url, classify, fingerprint, ROLE
+from .sources import ATS
 
 
 def now():
@@ -56,6 +57,19 @@ class Database:
             ''')
             c.execute("INSERT OR IGNORE INTO meta VALUES('host_id',?)", ('urn:uuid:' + str(uuid.uuid4()),))
         self.normalize_urls()
+        self.index_boards()
+
+    def index_boards(self):
+        from .sources import board_from_url
+        with self.connect() as c:
+            fields={r['name'] for r in c.execute('PRAGMA table_info(jobs)')}
+            if 'board_provider' not in fields:
+                c.execute("ALTER TABLE jobs ADD COLUMN board_provider TEXT NOT NULL DEFAULT ''")
+                c.execute("ALTER TABLE jobs ADD COLUMN board_slug TEXT NOT NULL DEFAULT ''")
+                for row in c.execute('SELECT id,canonical_url FROM jobs').fetchall():
+                    board=board_from_url(row['canonical_url']) or ('','')
+                    c.execute('UPDATE jobs SET board_provider=?,board_slug=? WHERE id=?',(*board,row['id']))
+            c.execute('CREATE INDEX IF NOT EXISTS unverified_boards ON jobs(board_provider,board_slug,verified_at)')
 
     def normalize_urls(self):
         """Upgrade older /application identities without losing status, notes, or sightings."""
@@ -114,34 +128,84 @@ class Database:
                       (provider, slug, name, discovered_from))
             return c.execute('SELECT id FROM sources WHERE provider=? AND slug=?', (provider, slug)).fetchone()[0]
 
+    def add_sources(self, rows, discovered_from):
+        """Atomic directory import; existing disabled boards stay disabled."""
+        with self.connect() as c:
+            for provider,slug,name in rows:
+                c.execute('INSERT INTO sources(provider,slug,name,discovered_from) VALUES(?,?,?,?) '
+                          'ON CONFLICT(provider,slug) DO UPDATE SET name=excluded.name '
+                          'WHERE sources.name=sources.slug AND excluded.name!=excluded.slug',
+                          (provider,slug,name,discovered_from))
+
+    def directory_succeeded(self, source, count, run_id):
+        ts=now()
+        with self.connect() as c:
+            c.execute('UPDATE sources SET last_attempt=?,last_success=?,last_error=NULL,job_count=? WHERE id=?',
+                      (ts,ts,count,source['id']))
+            c.execute('INSERT INTO checks(run_id,source_id,checked_at,status,job_count) VALUES(?,?,?,?,?)',
+                      (run_id,source['id'],ts,'success',count))
+
     def sources(self):
         with self.connect() as c:
             return [dict(r) for r in c.execute('SELECT * FROM sources ORDER BY provider,name')]
 
+    def source_summary(self):
+        threshold=datetime.fromtimestamp(datetime.now(timezone.utc).timestamp()-36*3600,timezone.utc).isoformat()
+        with self.connect() as c:
+            row=c.execute("""SELECT count(*) total,
+                coalesce(sum(enabled=1),0) enabled,
+                coalesce(sum(enabled=1 AND last_success IS NOT NULL AND last_error IS NULL),0) healthy,
+                coalesce(sum(enabled=1 AND last_error IS NOT NULL),0) failed,
+                coalesce(sum(enabled=1 AND last_attempt IS NULL),0) pending,
+                coalesce(sum(enabled=1 AND last_success>=? AND last_error IS NULL),0) recent
+                FROM sources WHERE provider!='manual'""",(threshold,)).fetchone()
+            platforms=[dict(r) for r in c.execute("SELECT provider,count(*) count FROM sources WHERE enabled=1 AND provider!='manual' GROUP BY provider")]
+            return {**dict(row),'platforms':platforms}
+
+    def source_page(self, search='', health='', offset=0, limit=100):
+        clauses=["provider!='manual'"];args=[]
+        if search:
+            clauses.append("(name LIKE ? ESCAPE '\\' OR slug LIKE ? ESCAPE '\\' OR provider LIKE ? ESCAPE '\\')")
+            term='%'+search.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
+            args += [term]*3
+        if health=='failed': clauses.append('enabled=1 AND last_error IS NOT NULL')
+        elif health=='pending': clauses.append('enabled=1 AND last_attempt IS NULL')
+        elif health=='enabled': clauses.append('enabled=1')
+        where=' WHERE '+' AND '.join(clauses)
+        with self.connect() as c:
+            total=c.execute('SELECT count(*) FROM sources'+where,args).fetchone()[0]
+            rows=c.execute('SELECT * FROM sources'+where+' ORDER BY provider,name,id LIMIT ? OFFSET ?',args+[limit,offset]).fetchall()
+        return {'sources':[dict(r) for r in rows],'total':total,'offset':offset}
+
     def ingest(self, source, jobs, run_id, start_date):
         """One atomic source snapshot; failed/partial collection never reaches this method."""
         ts, new_count = now(), 0
-        authoritative = source['provider'] in ('greenhouse', 'ashby', 'lever')
+        authoritative = source['provider'] in ATS
         # Parse and classify before acquiring the SQLite write lock. Large boards must
         # not hold the database transaction while doing CPU-heavy description work.
         prepared=[]
         for job in jobs:
-            result=classify(job['title'],job.get('description','') if authoritative else '',
+            # Large directories include every industry. Do not persist unrelated
+            # job families unless already tracked; this is title scope, never CV matching.
+            relevant=source['provider']=='manual' or bool(ROLE.search(job['title']))
+            result=classify(job['title'],job.get('description','') if authoritative and relevant else '',
                             job.get('location',''),job.get('country',''),start_date)
-            prepared.append((job,canonical_url(job['apply_url']),result))
+            prepared.append((job,canonical_url(job['apply_url']),result,relevant))
         with self.connect() as c:
             c.execute('UPDATE sightings SET misses=misses+1 WHERE source_id=?', (source['id'],))
-            for job,url,result in prepared:
+            for job,url,result,relevant in prepared:
                 external_id = str(job['external_id'])
                 existing = c.execute('SELECT * FROM jobs WHERE canonical_url=?',(url,)).fetchone()
                 if not existing:
                     existing = c.execute('SELECT j.* FROM sightings s JOIN jobs j ON j.id=s.job_id '
                                          'WHERE s.source_id=? AND s.external_id=?',
                                          (source['id'],external_id)).fetchone()
+                if not relevant and not existing:
+                    continue
                 job_id = existing['id'] if existing else str(uuid.uuid4())
                 description = job.get('description', '')
                 # A list-only sighting cannot overwrite an employer's full posting or visa evidence.
-                if existing and not authoritative:
+                if existing and not authoritative and (existing['verified_at'] or source['provider']=='github'):
                     c.execute('UPDATE jobs SET last_seen=? WHERE id=?', (ts, job_id))
                 else:
                     values = dict(job_id=job_id, canonical_url=url, apply_url=job['apply_url'], title=job['title'],
@@ -149,6 +213,8 @@ class Database:
                                   description=description, description_hash=fingerprint(description), posted_at=job.get('posted_at'),
                                   first_seen=ts, last_seen=ts, verified_at=ts if authoritative else None,
                                   **result, availability='open' if authoritative else 'unverified')
+                    from .sources import board_from_url
+                    values['board_provider'],values['board_slug']=board_from_url(url) or ('','')
                     values['scope_reasons'] = json.dumps(result['scope_reasons'])
                     values['evidence'] = json.dumps(result['evidence'])
                     columns = [k for k in values if k != 'job_id']
@@ -167,7 +233,7 @@ class Database:
             if authoritative:
                 # A live board can also disprove stale list links that were never on a prior ATS snapshot.
                 from .sources import board_from_url
-                unverified=c.execute("SELECT id,canonical_url FROM jobs WHERE verified_at IS NULL AND availability!='closed'").fetchall()
+                unverified=c.execute("SELECT id,canonical_url FROM jobs WHERE verified_at IS NULL AND availability!='closed' AND board_provider=? AND board_slug=?",(source['provider'],source['slug'])).fetchall()
                 for candidate in unverified:
                     if board_from_url(candidate['canonical_url'])==(source['provider'],source['slug']):
                         c.execute('INSERT INTO unverified_checks VALUES(?,?,1) ON CONFLICT(job_id,source_id) DO UPDATE SET misses=misses+1', (candidate['id'],source['id']))
@@ -178,7 +244,7 @@ class Database:
                 c.execute('''UPDATE jobs SET availability='closed' WHERE id IN
                     (SELECT job_id FROM sightings WHERE source_id=? AND misses>=2)
                     AND NOT EXISTS(SELECT 1 FROM sightings s JOIN sources p ON p.id=s.source_id
-                    WHERE s.job_id=jobs.id AND p.enabled=1 AND p.provider IN ('greenhouse','ashby','lever') AND s.misses<2)''', (source['id'],))
+                    WHERE s.job_id=jobs.id AND p.enabled=1 AND p.provider IN ('greenhouse','ashby','lever','recruitee') AND s.misses<2)''', (source['id'],))
             c.execute('UPDATE sources SET last_attempt=?,last_success=?,last_error=NULL,job_count=? WHERE id=?', (ts,ts,len(jobs),source['id']))
             c.execute('INSERT INTO checks(run_id,source_id,checked_at,status,job_count) VALUES(?,?,?,?,?)', (run_id,source['id'],ts,'success',len(jobs)))
         return new_count
