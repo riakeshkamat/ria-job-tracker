@@ -14,7 +14,7 @@ Native system sans serif. Body and rows 14px, secondary metadata 11–12px, head
 
 ## Layout
 
-One main column with a header, refresh status, view tabs, filters, and a semantic table. Source health and Plus settings expand inline. Job evidence and notes expand directly beneath their row. Smaller screens wrap filters and retain a horizontally scrollable table.
+One main column with a compact header, one-line refresh status, Jobs / Saved / Applications tabs, and a five-column semantic table. Search, role, sponsorship, and discovery-time filters are visible; work arrangement, required experience, graduate cohort, application status, and recent employer verification expand under More filters. Source counts, Plus controls, and audit views are inside Settings. Found date and experience sit under the role rather than in extra columns. Compact rows show US location options; details preserve the original source text. Smaller screens wrap filters and retain a horizontally scrollable table.
 
 ## Interaction
 

@@ -1,6 +1,7 @@
 """Conservative, inspectable rules. No resume matching or inferred visa approval."""
 import hashlib
 import re
+import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -78,21 +79,78 @@ US_CODES = 'AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN
 US_CITIES = {'san francisco','san jose','seattle','new york','boston','philadelphia','austin','chicago','palo alto','mountain view','sunnyvale','los angeles','san diego','santa clara','denver','atlanta','pittsburgh','washington dc','redmond','bellevue','menlo park','irvine'}
 
 
-def location_status(location, country=''):
-    if country.upper() in {'US', 'USA', 'UNITED STATES'}:
-        return 'us'
-    if country and country.upper() not in {'US', 'USA', 'UNITED STATES'}:
+US_TOKEN = re.compile(r'(?<!\w)(?:united states(?: of america)?|usa|u\.s\.?|us)(?!\w)',re.I)
+US_PLACE = re.compile(r'\b(?:'+ '|'.join(re.escape(x) for x in sorted((US_STATES-{'georgia'})|US_CITIES, key=len, reverse=True))+r')\b',re.I)
+US_STATE_CODE = re.compile(r',\s*(?:'+ '|'.join(US_CODES) +r')(?:\b|\s|$)')
+FOREIGN = re.compile(r'\b(?:united arab emirates|uae|u\.a\.e\.?|dubai|abu dhabi|sharjah|qatar|doha|saudi arabia|riyadh|kuwait|bahrain|oman|muscat|egypt|cairo|south africa|nigeria|kenya|morocco|canada|toronto|vancouver|montreal|ottawa|united kingdom|uk|england|scotland|london|india|bangalore|bengaluru|hyderabad|pune|chennai|mumbai|delhi|germany|berlin|munich|frankfurt|singapore|australia|sydney|melbourne|ireland|dublin|israel|tel aviv|poland|warsaw|france|paris|netherlands|amsterdam|mexico|switzerland|zurich|lausanne|japan|tokyo|south korea|seoul|taiwan|taipei|china|beijing|shanghai|hong kong|spain|madrid|barcelona|portugal|lisbon|sweden|stockholm|finland|helsinki|denmark|copenhagen|norway|oslo|brazil|sao paulo|argentina|chile|colombia|peru|pakistan|bangladesh|vietnam|thailand|malaysia|indonesia|philippines|new zealand|armenia|serbia|kazakhstan|tbilisi|european union|europe|emea|apac|latam|czechia|czech republic|romania|bulgaria|hungary|ukraine|russia|belarus|turkey|turkiye|greece|italy|austria|belgium|luxembourg|estonia|latvia|lithuania|croatia|costa rica|panama|uruguay|ecuador|cambodia|laos|nepal|sri lanka|bangladesh|lebanon|jordan)\b',re.I)
+
+
+def _location_signal(location, country=''):
+    text=''.join(c for c in unicodedata.normalize('NFKD',location or '') if not unicodedata.combining(c))
+    country=(country or '').strip().upper()
+    if country and country not in {'US','USA','UNITED STATES','UNITED STATES OF AMERICA'}:
         return 'outside_us'
-    text = location.lower()
-    if re.search(r'\b(united states|usa|u\.s\.|remote.{0,8}us)\b', text):
-        return 'us'
-    if any(re.search(r'\b' + re.escape(s) + r'\b', text) for s in US_STATES | US_CITIES):
-        return 'us'
-    if re.search(r',\s*(?:' + '|'.join(US_CODES) + r')(?:\b|\s|$)', location):
-        return 'us'
-    if re.search(r'\b(canada|toronto|vancouver|london|united kingdom|india|bangalore|bengaluru|hyderabad|pune|chennai|mumbai|germany|berlin|munich|frankfurt|singapore|australia|sydney|melbourne|ireland|dublin|israel|tel aviv|poland|warsaw|france|paris|netherlands|amsterdam|mexico|switzerland|zurich|lausanne|japan|tokyo|korea|seoul|taiwan|taipei|china|beijing|shanghai|hong kong|spain|madrid|barcelona|portugal|lisbon|sweden|stockholm|finland|helsinki|denmark|copenhagen|norway|oslo|brazil|sao paulo)\b', text):
+    if re.search(r'\b(?:non[ -]?(?:us|usa)|(?:excluding|except|outside(?:\s+of)?|not(?:\s+available|\s+eligible)?(?:\s+in|\s+to)?)\s+(?:the\s+)?(?:united states|usa|u\.s\.?|us))\b',text,re.I):
         return 'outside_us'
+    if US_TOKEN.search(text): return 'us'
+    if not country and re.search(r'\bOntario\s*,\s*CA\b',text,re.I):return 'unknown'
+    # A real US state code disambiguates Paris, TX / Berlin, NJ. Canada/CA
+    # and Georgia alone are ambiguous; foreign locations must not prove US eligibility.
+    state_code=US_STATE_CODE.search(text)
+    foreign=FOREIGN.search(text)
+    if state_code and not (foreign and state_code.group().strip(' ,')=='CA'):
+        return 'us'
+    if foreign:
+        alternatives=re.split(r'\s*[;·|/]\s*|\s+(?:or|and|&)\s+',text,flags=re.I)
+        if len(alternatives)>1 and any(_location_signal(part)=='us' for part in alternatives):
+            return 'us'
+        return 'outside_us'
+    if country or US_PLACE.search(text): return 'us'
     return 'unknown'
+
+
+def location_status(location, country='', title=''):
+    result=_location_signal(location,country)
+    if result=='us' and title:
+        # Some aggregate feeds mislabel a foreign vacancy as US. A location
+        # suffix in the title can contradict that metadata; quarantine it.
+        suffix=re.search(r'\b(?:remote|based in|located in)\s*[:\-]?\s*(.+)$',title,re.I)
+        parenthetical=re.findall(r'\(([^)]+)\)',title)
+        scopes=([suffix.group(1)] if suffix else [])+parenthetical
+        if any(_location_signal(part)=='outside_us' and not US_TOKEN.search(part) for part in scopes):
+            return 'unknown'
+    return result
+
+
+ROLE_FAMILIES={
+    'data':r'\b(?:data engineer|analytics engineer|data platform)\b',
+    'ai':r'\b(?:machine learning|ml engineer|ai engineer|research engineer|artificial intelligence)\b',
+    'quality':r'\b(?:qa|sdet|test|quality|automation)\b',
+    'infrastructure':r'\b(?:devops|sre|site reliability|cloud|infrastructure|platform|production|release)\b',
+    'security':r'\b(?:security|cybersecurity|cyber)\b',
+    'embedded':r'\b(?:embedded|firmware)\b',
+    'software':r'.*',
+}
+
+
+def job_attributes(title, location='', work_model=''):
+    model=(work_model or '').lower().replace('-','').replace('_','')
+    if model not in {'remote','hybrid','onsite'}:
+        match=re.search(r'\bhybrid\b',location or '',re.I) or re.search(r'\b(remote|on[ -]?site)\b',location or '',re.I)
+        model=match.group(0).lower().replace('-','').replace(' ','') if match else 'unknown'
+    return {'role_family':next(k for k,p in ROLE_FAMILIES.items() if re.search(p,title,re.I)),
+            'work_model':model,'early_career':int(bool(EARLY.search(title))),
+            'cohort_2027':int(bool(re.search(r'\b2027\b',title) and EARLY.search(title)))}
+
+
+def us_location_label(location, country='', work_model='unknown'):
+    """Keep the US options on the compact row; original locations stay in details."""
+    parts=re.split(r'\s*[;·]\s*',location or '')
+    us_parts=[p for p in parts if _location_signal(p)=='us' and not FOREIGN.search(p)]
+    if not us_parts:
+        if FOREIGN.search(location or ''):return 'US option listed'
+        return location or ('US remote' if work_model=='remote' else 'United States')
+    return ' · '.join(us_parts[:2])+(f' +{len(us_parts)-2} US locations' if len(us_parts)>2 else '')
 
 
 def classify(title, description, location='', country='', start_date='2027-06-01'):
@@ -132,12 +190,10 @@ def classify(title, description, location='', country='', start_date='2027-06-01
         reasons.append(f'Requires at least {min_years} years of experience')
     if min_years is None and not EARLY.search(title):
         reasons.append('Experience requirement needs verification')
-    loc = location_status(location, country)
-    if loc == 'outside_us':
+    loc = location_status(location, country, title)
+    if loc != 'us':
         scope = False
-        reasons.append('Location is outside the US')
-    elif loc == 'unknown':
-        reasons.append('US work location needs verification')
+        reasons.append('Location is outside the US' if loc=='outside_us' else 'US work location is unconfirmed')
     if re.search(r'\b202[0-6]\b', title) and not re.search(r'\b202[7-9]\b', title) and EARLY.search(title):
         scope = False
         reasons.append('Explicit graduate cohort predates 2027')

@@ -183,12 +183,12 @@ def ashby(j,source):
     secondary = j.get('secondaryLocations') or []
     locations = [j.get('location','')]+[s.get('location','') for s in secondary]
     countries = [((j.get('address') or {}).get('postalAddress') or {}).get('addressCountry','')]
-    countries += [(s.get('address') or {}).get('addressCountry','') for s in secondary]
+    countries += [((s.get('address') or {}).get('postalAddress') or s.get('address') or {}).get('addressCountry','') for s in secondary]
     country = 'US' if any(c in ('US','USA','United States') for c in countries) else next((c for c in countries if c),'')
     return dict(external_id=j.get('id') or j['jobUrl'], title=j['title'], company=source['name'],
                 location=' · '.join(x for x in locations if x),country=country,
                 description=j.get('descriptionPlain') or plain(j.get('descriptionHtml','')),
-                apply_url=j.get('applyUrl') or j['jobUrl'], posted_at=j.get('publishedAt'))
+                apply_url=j.get('applyUrl') or j['jobUrl'], posted_at=j.get('publishedAt'),work_model=j.get('workplaceType',''))
 
 
 def lever(j,source):
@@ -198,7 +198,7 @@ def lever(j,source):
     description += '\n' + plain(j.get('additional',''))
     return dict(external_id=j['id'], title=j['text'], company=source['name'], location=categories.get('location') or '',
                 country=j.get('country') or '', description=description, apply_url=j.get('applyUrl') or j['hostedUrl'],
-                posted_at=None)
+                posted_at=None,work_model=j.get('workplaceType',''))
 
 
 def recruitee(j,source):
@@ -208,18 +208,19 @@ def recruitee(j,source):
     location = ' · '.join(', '.join(str(x[k]) for k in ('city','state','country') if x.get(k)) for x in locations) or j.get('location','')
     return dict(external_id=str(j['id']),title=j['title'],company=j.get('company_name') or source['name'],
                 location=location,country=country,description=plain(j.get('description',''))+'\n'+plain(j.get('requirements','')),
-                apply_url=j.get('careers_apply_url') or j['careers_url'],posted_at=j.get('published_at'))
+                apply_url=j.get('careers_apply_url') or j['careers_url'],posted_at=j.get('published_at'),
+                work_model='hybrid' if j.get('hybrid') else 'remote' if j.get('remote') else 'onsite' if j.get('on_site') else '')
 
 
 def aggregate_job(j,provider):
     if provider == 'remotive':
         return dict(external_id=str(j['id']),title=j['title'],company=j['company_name'],
                     location=j.get('candidate_required_location',''),country='',description=plain(j.get('description','')),
-                    apply_url=j['url'],posted_at=j.get('publication_date'))
+                    apply_url=j['url'],posted_at=j.get('publication_date'),work_model='remote')
     if provider == 'jobicy':
         return dict(external_id=str(j['id']),title=j['jobTitle'],company=j['companyName'],
                     location=j.get('jobGeo',''),country='',description=plain(j.get('jobDescription','')),
-                    apply_url=j['url'],posted_at=j.get('pubDate'))
+                    apply_url=j['url'],posted_at=j.get('pubDate'),work_model='remote')
     countries=j.get('locationRestrictions') or []
     # Preserve the actual country restrictions. Empty means worldwide, not a US-only role.
     country='US' if any(c in {'US','USA','United States'} for c in countries) else countries[0] if countries else ''
@@ -229,7 +230,7 @@ def aggregate_job(j,provider):
     return dict(external_id=j['guid'],title=j['title'],company=j['companyName'],
                 location=', '.join(countries) or 'Worldwide remote',country=country,description=plain(j.get('description','')),
                 # Keep the provider's canonical page for attribution and application access.
-                apply_url=j['guid'],posted_at=posted)
+                apply_url=j['guid'],posted_at=posted,work_model='remote')
 
 
 def parse_community_json(text, source_name):

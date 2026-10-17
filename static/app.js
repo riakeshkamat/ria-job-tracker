@@ -2,6 +2,8 @@
 const $ = id => document.getElementById(id);
 const state = {view:'feed', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, expanded:new Set(), requestId:0};
 const sourceState={offset:0,total:0,requestId:0};
+const filterFields={'search':'search','status':'status-filter','sponsorship':'sponsorship','role':'role-filter',
+  'work_model':'work-filter','found_days':'found-filter','experience':'experience-filter','graduate':'graduate-filter','sort':'sort-filter'};
 const statuses = ['new','saved','applied','interview','offer','rejected','dismissed'];
 const label = x => x.charAt(0).toUpperCase()+x.slice(1);
 function el(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text; if(cls)e.className=cls; return e; }
@@ -25,12 +27,13 @@ function badge(job) {
 }
 function detailRow(job) {
   const row=el('tr'); row.id='detail-'+job.id;
-  const cell=el('td',undefined,'detail-cell');cell.colSpan=6;
+  const cell=el('td',undefined,'detail-cell');cell.colSpan=5;
   const detail=el('div',undefined,'job-details');
   detail.append(el('h3','Eligibility evidence'));
   if(job.evidence.length) for(const evidence of job.evidence) detail.append(el('blockquote',evidence.quote));
   else detail.append(el('p','The posting does not give clear sponsorship evidence. Verify OPT acceptance and future sponsorship with the employer.'));
   for(const reason of job.scope_reasons||[])detail.append(el('p',reason));
+  detail.append(el('p',`Original source locations: ${job.location||'Not supplied'}.`));
   detail.append(el('p',`Employer board last checked: ${job.verified_at?date(job.verified_at,true):'Not verified; discovered through a list or added manually'}. Availability: ${job.availability}.`));
   detail.append(el('p',`Source posting / publication date: ${date(job.posted_at)}. First found by this tracker: ${date(job.first_seen,true)}.`));
   const sources=el('p'); sources.textContent='Sources: '+job.sources.map(s=>`${s.name} (${s.last_error?'last refresh failed':s.misses?'absent from latest snapshot':'seen '+ago(s.last_seen)})`).join('; ');detail.append(sources);
@@ -51,11 +54,11 @@ function renderJobs() {
     const row=el('tr');
     const role=el('button',job.title,'role');role.type='button';role.setAttribute('aria-expanded',String(state.expanded.has(job.id)));role.setAttribute('aria-controls','detail-'+job.id);
     role.addEventListener('click',()=>{state.expanded.has(job.id)?state.expanded.delete(job.id):state.expanded.add(job.id);renderJobs();document.querySelector(`[aria-controls="detail-${job.id}"]`)?.focus();});
-    const name=el('td');name.append(role,el('div',job.company,'company'));if(job.scope_reasons?.includes('Experience requirement needs verification'))name.append(el('div','Experience requirement unverified','subtext'));row.append(name);
-    const location=el('td',job.location||'Location not supplied','location'); if(job.location_status==='unknown')location.append(el('div','US eligibility unverified','subtext'));row.append(location);
+    const name=el('td');name.append(role,el('div',job.company,'company'));name.append(el('div',`Found ${date(job.first_seen)} · ${job.min_years==null?'Experience not stated':`${job.min_years}+ years required`}`,'subtext'));row.append(name);
+    const location=el('td',job.us_location||job.location||'Location not supplied','location');if(job.work_model!=='unknown')location.append(el('div',label(job.work_model),'subtext'));row.append(location);
     const eligibility=el('td');eligibility.append(badge(job));if(job.availability!=='open')eligibility.append(el('div',job.availability==='closed'?'Absent from two employer snapshots':'Employer posting not verified','subtext'));
     else if(Date.now()-new Date(job.verified_at).getTime()>36*3600000)eligibility.append(el('div','Verification is stale','subtext'));
-    row.append(eligibility,el('td',date(job.first_seen),'date'));
+    row.append(eligibility);
     const status=el('select',undefined,'status-select');status.setAttribute('aria-label','Application status for '+job.title+' at '+job.company);
     for(const value of statuses){const option=el('option',label(value));option.value=value;status.append(option);}status.value=job.status;
     status.addEventListener('change',()=>action(async()=>{status.disabled=true;try{await api('/api/jobs/'+job.id,{method:'PATCH',body:JSON.stringify({status:status.value})});await loadJobs();}catch(e){status.value=job.status;throw e;}finally{status.disabled=false;}}));const statusCell=el('td');statusCell.append(status);row.append(statusCell);
@@ -65,26 +68,54 @@ function renderJobs() {
   $('result-count').textContent=state.total.toLocaleString()+' '+(state.total===1?'job':'jobs');
   $('empty').hidden=!!state.jobs.length;
   if(!state.jobs.length) {
-    const untouched=!state.overview?.runs?.length;
-    $('empty').querySelector('h2').textContent=untouched?'No jobs collected yet':'No jobs in this view';
-    $('empty').querySelector('p').textContent=untouched?'Refresh jobs to check the configured sources. Collection can take a few minutes.':'Try another view or clear your filters. Check source health if the latest refresh was incomplete.';
+    const untouched=state.view==='feed'&&!state.overview?.runs?.length&&$('clear-filters').hidden;
+    $('empty').querySelector('h2').textContent=untouched?'No jobs collected yet':state.view==='saved'?'No saved jobs match':'No jobs match these filters';
+    $('empty').querySelector('p').textContent=untouched?'Refresh jobs to check the configured sources.':'Clear filters to see more US roles. Non-US and unconfirmed locations stay out of the main views.';
   }
   $('page-info').textContent=state.total?`${state.offset+1}–${Math.min(state.offset+100,state.total)} of ${state.total.toLocaleString()}`:'';
   $('previous').disabled=state.offset===0;$('next').disabled=state.offset+100>=state.total;
-  $('view-note').textContent=state.view==='excluded'?'Excluded by explicit scope or sponsorship rules. Records are preserved.':state.view==='closed'?'Absent from two successful employer-board snapshots.':state.view==='tracked'?'Your saved jobs and application history.':'Unclear sponsorship stays visible. No résumé matching.';
+  $('view-note').textContent=['excluded','closed','all'].includes(state.view)?'Audit view: may contain non-US or unconfirmed locations.':state.view==='tracked'?'Your application history.':state.view==='saved'?'Your shortlist of US roles.':$('unapplied-filter').checked?'Unapplied US roles. Unclear sponsorship stays visible.':'US location required. Unclear sponsorship stays visible.';
+  $('unapplied-label').hidden=state.view!=='feed';
+}
+function readFilters() {
+  const query=new URLSearchParams({view:state.view,offset:String(state.offset)});
+  for(const [key,id] of Object.entries(filterFields))query.set(key,$(id).value);
+  query.set('verified',String($('verified-filter').checked));query.set('unapplied',String($('unapplied-filter').checked));
+  return query;
+}
+function showFilterState() {
+  const extra=['work-filter','experience-filter','graduate-filter','status-filter'].filter(id=>$(id).value).length+Number($('verified-filter').checked);
+  $('filter-count').textContent=extra?`(${extra} active)`:'';
+  const active=Object.entries(filterFields).some(([key,id])=>$(id).value && !['sort','found_days'].includes(key))||$('found-filter').value!=='0'||extra||$('sort-filter').value!=='recommended'||!$('unapplied-filter').checked;
+  $('clear-filters').hidden=!active;
+}
+function restoreFilters() {
+  const query=new URLSearchParams(location.search);
+  if(['feed','saved','tracked','excluded','closed','all'].includes(query.get('view')))state.view=query.get('view');
+  for(const [key,id] of Object.entries(filterFields)) {
+    const value=query.get(key);if(value===null)continue;
+    if($(id).tagName==='INPUT')$(id).value=value.slice(0,200);
+    else if(Array.from($(id).options).some(o=>o.value===value))$(id).value=value;
+  }
+  $('verified-filter').checked=query.get('verified')==='true';$('unapplied-filter').checked=query.get('unapplied')!=='false';
+  if(['work-filter','experience-filter','graduate-filter','status-filter'].some(id=>$(id).value)||$('verified-filter').checked)$('extra-filters').open=true;
+  document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===state.view)));
+}
+async function clearFilters() {
+  for(const [key,id] of Object.entries(filterFields))$(id).value=key==='sort'?'recommended':key==='found_days'?'0':'';
+  $('verified-filter').checked=false;$('unapplied-filter').checked=true;state.offset=0;await loadJobs();
 }
 async function loadJobs() {
   const requestId=++state.requestId;
-  const query=new URLSearchParams({view:state.view,search:$('search').value,status:$('status-filter').value,sponsorship:$('sponsorship').value,offset:String(state.offset)});
+  const query=readFilters();showFilterState();history.replaceState(null,'','?'+query);
   const data=await api('/api/jobs?'+query);if(requestId!==state.requestId)return;state.jobs=data.jobs;state.total=data.total;renderJobs();
 }
 function renderOverview(o) {
   const latest=o.runs[0];
   let text;
-  if(o.collecting)text=`Refreshing · ${latest?.success_count||0}/${o.source_count.toLocaleString()} configured feeds succeeded so far · ${(latest?.new_count||0).toLocaleString()} new records. You can keep browsing.`;
-  else if(!latest)text=`Not refreshed yet · ${o.source_count} configured sources`;
-  else text=`${latest.status==='success'?'Refresh complete':latest.status==='partial'?'Refresh incomplete':latest.status==='running'?'Refresh interrupted':'Refresh '+latest.status} · ${ago(latest.finished_at||latest.started_at)} · ${latest.success_count}/${latest.source_count} sources checked successfully · ${latest.new_count} new records`;
-  if(o.failed_sources)text+=` · ${o.failed_sources} sources need attention`;
+  if(o.collecting)text=`Updating jobs · ${(latest?.success_count||0).toLocaleString()} sources checked. You can keep browsing.`;
+  else if(!latest)text='Ready for your first refresh.';
+  else text=`${latest.status==='interrupted'?'Refresh interrupted':latest.status==='failed'?'Refresh failed':'Updated '+ago(latest.finished_at||latest.started_at)}${o.failed_sources?' · Some sources unavailable. Details in Settings.':''}`;
   $('refresh-line').textContent=text;$('refresh-line').className='refresh-line'+(o.failed_sources||latest&&latest.status!=='success'?' warning':'');
   if(o.coverage){const c=o.coverage;$('coverage-line').textContent=`${c.enabled.toLocaleString()} enabled feeds · ${c.recent.toLocaleString()} checked successfully in the last 36 hours · ${c.pending.toLocaleString()} not checked yet · ${c.failed.toLocaleString()} need attention. Coverage is limited to these feeds.`;}
   $('refresh').disabled=o.collecting;$('refresh').textContent=o.collecting?'Refreshing…':'Refresh jobs';
@@ -121,9 +152,10 @@ $('login-form').addEventListener('submit',async event=>{event.preventDefault();$
 $('refresh').addEventListener('click',()=>action(async()=>{$('refresh').disabled=true;try{await api('/api/refresh',{method:'POST'});message('Refresh started. You can keep browsing while sources are checked.');setTimeout(()=>action(loadOverview),500);}finally{setTimeout(()=>action(loadOverview),2000);}}));
 $('settings-button').addEventListener('click',()=>action(async()=>{$('settings').hidden=!$('settings').hidden;$('settings-button').setAttribute('aria-expanded',String(!$('settings').hidden));if(!$('settings').hidden)await loadSources();}));
 $('close-settings').addEventListener('click',()=>{$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false');$('settings-button').focus();});
-document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>action(async()=>{state.view=button.dataset.view;state.offset=0;document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));await loadJobs();})));
+document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>action(async()=>{state.view=button.dataset.view;state.offset=0;$('status-filter').value='';document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false');await loadJobs();})));
 let searchTimer; $('search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>action(async()=>{state.offset=0;await loadJobs();}),250);});
-for(const id of ['status-filter','sponsorship'])$(id).addEventListener('change',()=>action(async()=>{state.offset=0;await loadJobs();}));
+for(const id of Object.values(filterFields).filter(id=>id!=='search').concat(['verified-filter','unapplied-filter']))$(id).addEventListener('change',()=>action(async()=>{state.offset=0;await loadJobs();}));
+for(const id of ['clear-filters','empty-clear'])$(id).addEventListener('click',()=>action(clearFilters));
 $('previous').addEventListener('click',()=>action(async()=>{state.offset=Math.max(0,state.offset-100);await loadJobs();}));
 $('next').addEventListener('click',()=>action(async()=>{state.offset+=100;await loadJobs();}));
 $('source-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{await api('/api/sources',{method:'POST',body:JSON.stringify({provider:$('source-provider').value,slug:$('source-slug').value,name:$('source-name').value})});event.target.reset();await loadSources();await loadOverview();message('Source added. Refresh jobs to collect its listings.');});});
@@ -140,4 +172,4 @@ $('save-model').addEventListener('click',()=>action(async()=>{await api('/api/ch
 $('review').addEventListener('click',()=>action(async()=>{await api('/api/chatgpt/review',{method:'POST'});message('ChatGPT review started. Collection and application links remain available.');}));
 $('disconnect').addEventListener('click',()=>action(async()=>{const data=await api('/api/chatgpt/disconnect',{method:'POST'});await loadOverview();message(data.message,!data.revoked);}));
 async function poll(){if(!$('app').hidden)await action(loadOverview);setTimeout(poll,state.overview?.collecting?3000:30000);}
-action(start);setTimeout(poll,3000);
+restoreFilters();action(start);setTimeout(poll,3000);

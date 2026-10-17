@@ -27,6 +27,8 @@ Decorative dashboards, promotional content, match scores, unnecessary onboarding
 - Preserve uncertain openings for review.
 - Make source failures and stale data visible.
 - Keep collection working without AI access.
+- Require positive US location evidence in the main views; hold ambiguous geography in audit views.
+- Keep application filters separate from source administration and retain personal history when a posting no longer qualifies.
 
 ## Accessibility & Inclusion
 

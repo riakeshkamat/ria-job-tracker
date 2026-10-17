@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .collector import Collector
 from .config import config as default_config
 from .db import Database,now
-from .domain import canonical_url
+from .domain import canonical_url,ROLE_FAMILIES
 from .plus import PlanError,Plus,verify_identity
 from .sources import load_seeds,validate_source
 
@@ -30,6 +30,7 @@ STATUSES={'new','saved','applied','interview','offer','rejected','dismissed'}
 def create_app(config=default_config,db=None):
     config.prepare()
     db=db or Database(config.data_dir/'tracker.sqlite3')
+    db.refresh_location_rules(config.start_date)
     load_seeds(db)
     collector=Collector(db,config)
     plus=Plus(db,config)
@@ -151,10 +152,17 @@ def create_app(config=default_config,db=None):
         r=JSONResponse({'ok':True}); r.delete_cookie('tracker_session'); return r
 
     @app.get('/api/jobs')
-    def jobs(view:str='feed',search:str='',status:str='',sponsorship:str='',offset:int=0):
-        if view not in {'feed','tracked','excluded','closed','all'} or status and status not in STATUSES:
+    def jobs(view:str='feed',search:str='',status:str='',sponsorship:str='',offset:int=0,
+             role:str='',work_model:str='',found_days:int=0,experience:str='',graduate:str='',
+             verified:bool=False,sort:str='recommended',unapplied:bool=False):
+        if (view not in {'feed','saved','tracked','excluded','closed','all'} or status and status not in STATUSES
+            or sponsorship not in {'','supported','unknown','conflict','restricted','review'}
+            or role and role not in ROLE_FAMILIES or work_model not in {'','remote','hybrid','onsite','unknown'}
+            or found_days not in {0,1,3,7,30} or experience not in {'','0','1','2','3','unknown'}
+            or graduate not in {'','early','2027'} or sort not in {'recommended','newest','company','posted'}):
             raise HTTPException(400,'Invalid filter')
-        return db.jobs(view,search[:200],status,sponsorship,100,max(offset,0))
+        return db.jobs(view,search[:200],status,sponsorship,100,max(offset,0),role=role,work_model=work_model,
+                       found_days=found_days,experience=experience,graduate=graduate,verified=verified,sort=sort,unapplied=unapplied)
 
     @app.patch('/api/jobs/{job_id}')
     async def update_job(job_id:str,request:Request):

@@ -235,7 +235,7 @@ def test_app_auth_csrf_and_user_data(config,db):
         assert client.post('/api/login',json={'password':config.password},headers=headers).status_code==200
         assert client.get('/api/jobs').status_code==200
         assert client.post('/api/jobs',json={},headers={**headers,'Origin':'https://evil.example'}).status_code==403
-        response=client.post('/api/jobs',json={'title':'Software Engineer','company':'Acme','apply_url':'https://example.com/job'},headers=headers)
+        response=client.post('/api/jobs',json={'title':'Software Engineer','company':'Acme','location':'New York, NY','apply_url':'https://example.com/job'},headers=headers)
         assert response.status_code==200
         records=client.get('/api/jobs').json()['jobs']
         assert records[0]['availability']=='unverified'

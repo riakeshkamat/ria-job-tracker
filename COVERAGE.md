@@ -38,7 +38,7 @@ These lists can surface employers using Workday, Microsoft Careers, Amazon Jobs,
 | [Jobicy](https://github.com/Jobicy/remote-jobs-api) | Entire public seven-day feed, all cursor pages, software-related titles retained | Feed expiry does not mean a job closed; links stay on Jobicy |
 | [Himalayas](https://himalayas.app/api) | US search, Entry-level and Mid-level labels, all pages until empty | Results can shift during traversal and upstream seniority labels can be wrong; links stay on Himalayas |
 
-The normal US, role, and experience rules apply. Worldwide jobs remain visible for location verification. Remote listings carry provider descriptions, are not employer-verified, and cannot overwrite authoritative employer evidence. No remote-feed disappearance is treated as a confirmed job closure. Source names and canonical provider links are preserved. This is a private personal tracker, not a public redistribution feed or signup collection service.
+The normal US, role, and experience rules apply. Worldwide or unspecified remote locations are excluded from the main views unless a US option is explicitly supported. A US label contradicted by a foreign region in the title is held out for review. Remote listings carry provider descriptions, are not employer-verified, and cannot overwrite authoritative employer evidence. No remote-feed disappearance is treated as a confirmed job closure. Source names and canonical provider links are preserved. This is a private personal tracker, not a public redistribution feed or signup collection service.
 
 ## Remaining gaps
 

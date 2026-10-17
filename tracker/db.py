@@ -4,7 +4,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from .domain import canonical_url, classify, fingerprint, ROLE
+from .domain import canonical_url, classify, fingerprint, ROLE, location_status, job_attributes,us_location_label
 from .sources import ATS, AGGREGATORS
 
 
@@ -58,6 +58,39 @@ class Database:
             c.execute("INSERT OR IGNORE INTO meta VALUES('host_id',?)", ('urn:uuid:' + str(uuid.uuid4()),))
         self.normalize_urls()
         self.index_boards()
+        with self.connect() as c:
+            fields={r['name'] for r in c.execute('PRAGMA table_info(jobs)')}
+            for name,definition in [('role_family',"TEXT NOT NULL DEFAULT 'software'"),
+                                    ('work_model',"TEXT NOT NULL DEFAULT 'unknown'"),
+                                    ('early_career','INTEGER NOT NULL DEFAULT 0'),
+                                    ('cohort_2027','INTEGER NOT NULL DEFAULT 0')]:
+                if name not in fields:c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
+            c.execute('CREATE INDEX IF NOT EXISTS us_feed ON jobs(location_status,in_scope,status,first_seen)')
+
+    def refresh_location_rules(self, start_date):
+        """Reclassify stored locations before serving the updated feed; retain user history."""
+        if self.get('us_location_rules_version')==1:return
+        changed=0
+        with self.connect() as c:
+            rows=c.execute('SELECT id,title,location,country,location_status,in_scope,scope_reasons,work_model FROM jobs').fetchall()
+            for row in rows:
+                loc=location_status(row['location'],row['country'],row['title'])
+                reasons=[r for r in json.loads(row['scope_reasons']) if r not in {
+                    'Location is outside the US','US work location needs verification','US work location is unconfirmed'}]
+                scope=row['in_scope']
+                if loc!='us':
+                    scope=0
+                    reasons.append('Location is outside the US' if loc=='outside_us' else 'US work location is unconfirmed')
+                elif row['location_status']!='us' and not scope:
+                    description=c.execute('SELECT description FROM jobs WHERE id=?',(row['id'],)).fetchone()[0]
+                    result=classify(row['title'],description,row['location'],row['country'],start_date)
+                    scope,reasons=result['in_scope'],result['scope_reasons']
+                attrs=job_attributes(row['title'],row['location'],row['work_model'])
+                c.execute('UPDATE jobs SET location_status=?,in_scope=?,scope_reasons=?,role_family=?,work_model=?,early_career=?,cohort_2027=? WHERE id=?',
+                          (loc,scope,json.dumps(reasons),attrs['role_family'],attrs['work_model'],attrs['early_career'],attrs['cohort_2027'],row['id']))
+                changed+=int(loc!=row['location_status'])
+            c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('us_location_rules_version','1'))
+            c.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('us_location_migration',json.dumps({'at':now(),'reviewed':len(rows),'changed':changed})))
 
     def index_boards(self):
         from .sources import board_from_url
@@ -217,6 +250,7 @@ class Database:
                                   description=description, description_hash=fingerprint(description), posted_at=job.get('posted_at'),
                                   first_seen=ts, last_seen=ts, verified_at=ts if authoritative else None,
                                   **result, availability='open' if authoritative else 'unverified')
+                    values.update(job_attributes(job['title'],job.get('location',''),job.get('work_model','')))
                     from .sources import board_from_url
                     values['board_provider'],values['board_slug']=board_from_url(url) or ('','')
                     values['scope_reasons'] = json.dumps(result['scope_reasons'])
@@ -258,14 +292,17 @@ class Database:
             c.execute('UPDATE sources SET last_attempt=?,last_error=? WHERE id=?', (now(),error,source_id))
             c.execute('INSERT INTO checks(run_id,source_id,checked_at,status,error) VALUES(?,?,?,?,?)', (run_id,source_id,now(),'failed',error))
 
-    def jobs(self, view='feed', search='', status='', sponsorship='', limit=100, offset=0):
+    def jobs(self, view='feed', search='', status='', sponsorship='', limit=100, offset=0,
+             role='',work_model='',found_days=0,experience='',graduate='',verified=False,sort='recommended',unapplied=False):
         clauses, args = [], []
         if view == 'feed':
-            clauses += ["in_scope=1", "sponsorship!='restricted'", "availability!='closed'", "status!='dismissed'"]
+            clauses += ["location_status='us'", "in_scope=1", "sponsorship!='restricted'", "availability!='closed'", "status!='dismissed'"]
+        elif view=='saved':
+            clauses += ["location_status='us'", "status='saved'"]
         elif view == 'excluded':
-            clauses += ["(in_scope=0 OR sponsorship='restricted')"]
+            clauses += ["(in_scope=0 OR sponsorship='restricted' OR location_status!='us')"]
         elif view == 'tracked':
-            clauses += ["status IN ('saved','applied','interview','offer','rejected')"]
+            clauses += ["location_status='us'", "status IN ('applied','interview','offer','rejected')"]
         elif view == 'closed':
             clauses += ["availability='closed'"]
         if search:
@@ -279,17 +316,28 @@ class Database:
                 clauses += ["(sponsorship IN ('unknown','conflict') OR location_status='unknown')"]
             else:
                 clauses += ['sponsorship=?']; args += [sponsorship]
+        if role: clauses.append('role_family=?');args.append(role)
+        if work_model: clauses.append('work_model=?');args.append(work_model)
+        if found_days:
+            clauses.append('julianday(first_seen)>=julianday(?)')
+            args.append(datetime.fromtimestamp(datetime.now(timezone.utc).timestamp()-found_days*86400,timezone.utc).isoformat())
+        if experience=='unknown':clauses.append('min_years IS NULL')
+        elif experience:clauses.append('min_years IS NOT NULL AND min_years<=?');args.append(int(experience))
+        if graduate=='early':clauses.append('early_career=1')
+        elif graduate=='2027':clauses.append('cohort_2027=1')
+        if verified:clauses.append("verified_at IS NOT NULL AND julianday(verified_at)>=julianday('now','-36 hours')")
+        if unapplied and view=='feed' and not status:clauses.append("status IN ('new','saved')")
         where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+        order={'newest':'first_seen DESC,company,title,id','company':'company COLLATE NOCASE,title,id',
+               'posted':"(julianday(posted_at) IS NULL),julianday(posted_at) DESC,first_seen DESC,id"}.get(sort,
+               'early_career DESC,CASE WHEN min_years IS NOT NULL THEN 0 ELSE 1 END,first_seen DESC,company,title,id')
         with self.connect() as c:
             total = c.execute('SELECT COUNT(*) FROM jobs'+where,args).fetchone()[0]
-            rows = c.execute('SELECT * FROM jobs'+where+''' ORDER BY
-                CASE WHEN lower(title) LIKE '%new%grad%' OR lower(title) LIKE '%entry%level%'
-                    OR lower(title) LIKE '%early%career%' OR lower(title) LIKE '%junior%'
-                    THEN 0 WHEN min_years IS NOT NULL THEN 1 ELSE 2 END,
-                first_seen DESC,company,title LIMIT ? OFFSET ?''', args+[limit,offset]).fetchall()
+            rows = c.execute('SELECT * FROM jobs'+where+' ORDER BY '+order+' LIMIT ? OFFSET ?', args+[limit,offset]).fetchall()
             output = []
             for r in rows:
                 item = dict(r)
+                item['us_location']=us_location_label(item['location'],item['country'],item['work_model']) if item['location_status']=='us' else item['location']
                 for key in ('evidence','scope_reasons','ai_review'):
                     item[key] = json.loads(item[key]) if item[key] else None
                 item['sources'] = [dict(s) for s in c.execute('SELECT p.name,p.provider,p.last_success,p.last_error,s.last_seen,s.misses FROM sightings s JOIN sources p ON p.id=s.source_id WHERE s.job_id=?', (item['id'],))]
