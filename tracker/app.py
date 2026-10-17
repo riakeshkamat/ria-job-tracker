@@ -41,9 +41,9 @@ def create_app(config=default_config,db=None):
         tasks.add(task)
         task.add_done_callback(tasks.discard)
 
-    async def review_safely():
+    async def review_safely(limit=None):
         try:
-            await plus.review()
+            await plus.review(limit)
         except PlanError as exc:
             db.set('chatgpt_last_result',{'at':now(),'status':'paused','message':str(exc)})
 
@@ -267,10 +267,14 @@ def create_app(config=default_config,db=None):
         return {'ok':True}
 
     @app.post('/api/chatgpt/review',status_code=202)
-    async def review():
+    async def review(request:Request):
         if plus.lock.locked(): raise HTTPException(409,'A ChatGPT request is already running')
         if not plus.record() or not db.get('chatgpt_model'): raise HTTPException(409,'Connect Plus and choose a model first')
-        spawn(review_safely())
+        data=await payload(request) if await request.body() else {}
+        limit=data.get('limit')
+        if limit is not None and (type(limit) is not int or not 1<=limit<=config.ai_limit):
+            raise HTTPException(400,'Review limit must be a positive integer within the daily cap')
+        spawn(review_safely(limit))
         return {'ok':True}
 
     @app.post('/api/chatgpt/disconnect')
