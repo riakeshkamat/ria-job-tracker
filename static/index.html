@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="A simple daily job finder for US new-grad and entry-level engineering roles.">
+  <title>Open Job Tracker</title>
+  <link rel="icon" href="data:,"><link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<div id="login" hidden>
+  <form id="login-form" class="login-form"><h1>Open Job Tracker</h1><p>Sign in to your private tracker.</p>
+    <label>Tracker password<input id="password" type="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Sign in</button><p id="login-error" role="alert"></p>
+  </form>
+</div>
+<main id="app" hidden>
+  <header><div><div class="eyebrow">YOUR DAILY SEARCH</div><h1>Open Job Tracker</h1></div>
+    <div class="header-actions"><button id="settings-button" aria-expanded="false" aria-controls="settings">Sources &amp; settings</button><button id="refresh" class="primary">Refresh jobs</button></div>
+  </header>
+  <p class="subtitle">US new-grad &amp; entry-level engineering · 0–3 years · June 2027 onward</p>
+  <div class="refresh-line" id="refresh-line" role="status">Checking last refresh…</div>
+  <p id="message" role="status" hidden></p>
+  <section id="settings" hidden aria-label="Sources and settings">
+    <div class="section-heading"><h2>Sources &amp; settings</h2><button id="close-settings">Close</button></div>
+    <div class="settings-columns">
+      <section><h3>Daily collection</h3><p id="schedule-info"></p><p>Employer boards are discovered from GitHub application links. Coverage is limited to the sources listed below. Failed sources retain their previous jobs.</p>
+        <details><summary>Add an employer board or GitHub list</summary><form id="source-form" class="stack">
+          <label>Platform<select id="source-provider"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option><option value="github">GitHub</option></select></label>
+          <label>Board identifier or owner/repository<input id="source-slug" placeholder="e.g. stripe" required></label>
+          <label>Display name<input id="source-name" placeholder="e.g. Stripe"></label><button type="submit">Add source</button>
+        </form></details>
+        <div id="unsupported"></div>
+      </section>
+      <section><h3>ChatGPT Plus</h3><p id="plus-status">Not connected.</p>
+        <p>Plus reviews unclear descriptions. Collection works without it. AI advice is shown separately and never hides jobs.</p>
+        <a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">Manage ChatGPT usage ↗</a>
+        <details id="connect-instructions"><summary>Connect your ChatGPT plan</summary>
+          <ol><li>In ChatGPT settings, disable <strong>Allow other apps to use credits after reaching your usage limit</strong>.</li>
+            <li>From this project on your computer, run:<pre id="connect-command"></pre></li>
+            <li>Complete OpenAI sign-in, then import the generated connection file below. The tracker will own session renewal.</li></ol>
+          <label class="check"><input id="plan-only" type="checkbox">I disabled additional-credit fallback in ChatGPT settings.</label>
+          <label>Connection file<input id="credential-file" type="file" accept="application/json,.json"></label>
+          <button id="import-plus">Import connection</button>
+          <p class="muted">OpenAI account eligibility is required. No API keys are accepted. Never share or commit the connection file; delete it after import.</p>
+        </details>
+        <div id="model-controls" hidden><label>Model<select id="model"><option value="">Load available models</option></select></label><button id="load-models">Load models</button><button id="save-model">Use selected model</button><button id="review">Review unclear jobs</button><button id="disconnect">Disconnect</button></div>
+      </section>
+    </div>
+    <details><summary id="sources-summary">Source health</summary><div class="table-scroll"><table class="source-table"><thead><tr><th>Source</th><th>Last success</th><th>Listings</th><th>Health</th><th>Enabled</th></tr></thead><tbody id="sources-body"></tbody></table></div></details>
+    <details><summary>Refresh history</summary><div id="run-history"></div></details>
+    <div class="settings-footer"><a href="/api/export" download>Export jobs &amp; status</a><button id="sign-out">Sign out</button></div>
+  </section>
+  <nav class="views" aria-label="Job views"><button data-view="feed" aria-pressed="true">Discover</button><button data-view="tracked" aria-pressed="false">My applications</button><button data-view="excluded" aria-pressed="false">Excluded</button><button data-view="closed" aria-pressed="false">Closed</button><button data-view="all" aria-pressed="false">All records</button></nav>
+  <div class="filters"><label class="search-label"><span class="sr-only">Search roles, companies, or locations</span><input id="search" type="search" placeholder="Search roles, companies, locations" autocomplete="off"></label>
+    <label><span class="sr-only">Sponsorship filter</span><select id="sponsorship"><option value="">All sponsorship evidence</option value="supported">Sponsorship mentioned</option value="review">Needs verification</option value="restricted">Explicit restriction</option></select></label>
+    <label><span class="sr-only">Application status filter</span><select id="status-filter"><option value="">All statuses</option><option value="new">New</option><option value="saved">Saved</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="dismissed">Dismissed</option></select></label>
+    <button id="add-job-button" aria-expanded="false" aria-controls="add-job">Add a job</button>
+  </div>
+  <form id="add-job" class="inline-form" hidden><h3>Add a job</h3><label>Role<input name="title" required maxlength="250"></label><label>Company<input name="company" required maxlength="150"></label><label>Location<input name="location" maxlength="500"></label><label>Application link<input name="apply_url" type="url" required></label><button type="submit" class="primary">Add job</button></form>
+  <div class="list-heading"><p id="result-count" aria-live="polite">Loading jobs…</p><p id="view-note">Unclear sponsorship stays visible. No résumé matching.</p></div>
+  <div class="table-scroll"><table id="jobs-table"><caption class="sr-only">Job openings and application status</caption><thead><tr><th>Role / company</th><th>Location</th><th>Eligibility</th><th>First found</th><th>Status</th><th><span class="sr-only">Application</span></th></tr></thead><tbody id="jobs-body"></tbody></table></div>
+  <div id="empty" hidden><h2>No jobs collected yet</h2><p>Refresh jobs to check the configured sources. Collection can take a few minutes.</p></div>
+  <footer class="list-footer"><span id="page-info"></span><div><button id="previous" disabled>Previous</button><button id="next" disabled>Next</button></div></footer>
+  <p class="footnote">Sponsorship evidence reflects the posting, not an employment or visa guarantee. Posting dates are shown only when supplied by the source.</p>
+</main>
+</body>
+</html>
