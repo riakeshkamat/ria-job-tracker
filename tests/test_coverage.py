@@ -162,3 +162,13 @@ def test_himalayas_preserves_multicountry_scope_and_attribution():
            locationRestrictions=['Canada','United States'])
     row=aggregate_job(j,'himalayas')
     assert row['country']=='US' and row['apply_url']==j['guid'] and row['posted_at'].startswith('2026-')
+
+
+def test_aggregate_experience_scope_is_read_without_promoting_visa_claims(setup):
+    config,db=setup;db.add_source('remotive','us-engineering','Remotive');s=db.sources()[0]
+    item=dict(external_id='1',title='Software Engineer',company='Acme',location='US',country='US',
+              description='Requires 6 years of experience. Visa sponsorship is available.',apply_url='https://remotive.com/jobs/1')
+    db.ingest(s,[item],None,config.start_date)
+    assert db.jobs()['total']==0
+    record=db.jobs('excluded')['jobs'][0]
+    assert record['min_years']==6 and record['sponsorship']=='unknown'

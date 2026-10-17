@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from .domain import canonical_url, classify, fingerprint, ROLE
-from .sources import ATS
+from .sources import ATS, AGGREGATORS
 
 
 def now():
@@ -188,8 +188,12 @@ class Database:
             # Large directories include every industry. Do not persist unrelated
             # job families unless already tracked; this is title scope, never CV matching.
             relevant=source['provider']=='manual' or bool(ROLE.search(job['title']))
-            result=classify(job['title'],job.get('description','') if authoritative and relevant else '',
+            result=classify(job['title'],job.get('description','') if relevant and (authoritative or source['provider'] in AGGREGATORS) else '',
                             job.get('location',''),job.get('country',''),start_date)
+            if not authoritative:
+                # Provider descriptions can establish experience scope, but their
+                # sponsorship claims still require the employer's own evidence.
+                result['sponsorship'],result['evidence']='unknown',[]
             prepared.append((job,canonical_url(job['apply_url']),result,relevant))
         with self.connect() as c:
             c.execute('UPDATE sightings SET misses=misses+1 WHERE source_id=?', (source['id'],))
