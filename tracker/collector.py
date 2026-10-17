@@ -31,6 +31,9 @@ class Collector:
     def recover(self):
         with self.db.connect() as c:
             c.execute("UPDATE runs SET status='interrupted',finished_at=?,error='Service restarted during collection; existing jobs preserved' WHERE status='running'", (now(),))
+        latest=self.db.runs()
+        if latest and latest[0]['status']=='interrupted':
+            self.db.set('last_schedule_attempt',None)
 
     async def run(self):
         if self.lock.locked():

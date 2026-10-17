@@ -214,6 +214,17 @@ def test_schedule_catch_up_and_daylight_saving():
     assert not schedule_due('2026-11-01T13:00:00+00:00',early)
 
 
+@pytest.mark.parametrize('status',['running','interrupted'])
+def test_interrupted_refresh_is_due_again_after_restart(db,config,status):
+    db.set('last_schedule_attempt','2026-10-17T13:00:00+00:00')
+    with db.connect() as c:
+        c.execute('INSERT INTO runs(id,started_at,status) VALUES(?,?,?)',('crashed','2026-10-17T13:00:00+00:00',status))
+    Collector(db,config).recover()
+    assert db.runs()[0]['status']=='interrupted'
+    assert db.get('last_schedule_attempt') is None
+    assert schedule_due(db.get('last_schedule_attempt'),datetime(2026,10,17,14,tzinfo=timezone.utc))
+
+
 def test_app_auth_csrf_and_user_data(config,db):
     config.password='a-long-test-password'
     app=create_app(config,db)
