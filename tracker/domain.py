@@ -69,7 +69,7 @@ POSITIVE = [
     r'\b(?:offer|provide|offers|provides)\s+(?:visa|immigration)\s+sponsorship\b',
 ]
 ROLE = re.compile(r'\b(software|developer|swe|sde|backend|back.end|frontend|front.end|full.?stack|devops|sre|site reliability|data engineer|machine learning|ml engineer|ai engineer|cloud engineer|platform engineer|infrastructure engineer|production engineer|release engineer|forward.deployed engineer|security engineer|test engineer|quality engineer|qa engineer|automation engineer|systems engineer|embedded|firmware|quantitative developer|research engineer|application engineer)\b', re.I)
-EARLY = re.compile(r'\b(new[ -]?grad(?:uate)?|entry[ -]?level|early[ -]?career|university grad|junior|associate|engineer\s*(?:i|1))\b', re.I)
+EARLY = re.compile(r'\b(new[ -]?(?:college[ -]?)?grad(?:uate)?s?|entry[ -]?level|early[ -]?career|university grad|junior|associate|engineer\s*(?:i|1))\b', re.I)
 SENIOR = re.compile(r'\b(senior|sr\.?|staff|principal|director|lead|manager|engineer\s*(?:iii|iv|[4-9]))\b', re.I)
 US_STATES = {'alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah','vermont','virginia','washington','west virginia','wisconsin','wyoming'}
 US_CODES = 'AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split()

@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {view:'feed', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, expanded:new Set()};
+const state = {view:'feed', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, expanded:new Set(), requestId:0};
 const statuses = ['new','saved','applied','interview','offer','rejected','dismissed'];
 const label = x => x.charAt(0).toUpperCase()+x.slice(1);
 function el(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text; if(cls)e.className=cls; return e; }
@@ -73,8 +73,9 @@ function renderJobs() {
   $('view-note').textContent=state.view==='excluded'?'Excluded by explicit scope or sponsorship rules. Records are preserved.':state.view==='closed'?'Absent from two successful employer-board snapshots.':state.view==='tracked'?'Your saved jobs and application history.':'Unclear sponsorship stays visible. No résumé matching.';
 }
 async function loadJobs() {
+  const requestId=++state.requestId;
   const query=new URLSearchParams({view:state.view,search:$('search').value,status:$('status-filter').value,sponsorship:$('sponsorship').value,offset:String(state.offset)});
-  const data=await api('/api/jobs?'+query);state.jobs=data.jobs;state.total=data.total;renderJobs();
+  const data=await api('/api/jobs?'+query);if(requestId!==state.requestId)return;state.jobs=data.jobs;state.total=data.total;renderJobs();
 }
 function renderOverview(o) {
   const latest=o.runs[0];
