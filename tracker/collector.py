@@ -55,10 +55,12 @@ class Collector:
                                     raise ValueError('Unexpected empty board; previous records preserved. Confirm employer board identifier.')
                                 # Discover real ATS boards from application links, not guessed slugs.
                                 if source['provider'] == 'github':
-                                    for job in jobs:
-                                        board = board_from_url(job['apply_url'])
-                                        if board:
-                                            self.db.add_source(*board,job['company'],source['slug'])
+                                    def discover():
+                                        for job in jobs:
+                                            board = board_from_url(job['apply_url'])
+                                            if board:
+                                                self.db.add_source(*board,job['company'],source['slug'])
+                                    await asyncio.to_thread(discover)
                                 new = await asyncio.to_thread(self.db.ingest,source,jobs,run_id,self.config.start_date)
                                 counts['success'] += 1
                                 counts['found'] += len(jobs)
@@ -68,11 +70,13 @@ class Collector:
                             except Exception as exc:
                                 # No response bodies or credentials in the audit log.
                                 error = f'HTTP {exc.response.status_code}' if isinstance(exc,httpx.HTTPStatusError) else str(exc)[:250] if isinstance(exc,ValueError) else type(exc).__name__
-                                self.db.source_failed(source['id'],run_id,error)
+                                await asyncio.to_thread(self.db.source_failed,source['id'],run_id,error)
                             finally:
-                                with self.db.connect() as c:
-                                    c.execute('UPDATE runs SET source_count=?,success_count=?,found_count=?,new_count=? WHERE id=?',
-                                              (counts['sources'],counts['success'],counts['found'],counts['new'],run_id))
+                                def persist_progress():
+                                    with self.db.connect() as c:
+                                        c.execute('UPDATE runs SET source_count=?,success_count=?,found_count=?,new_count=? WHERE id=?',
+                                                  (counts['sources'],counts['success'],counts['found'],counts['new'],run_id))
+                                await asyncio.to_thread(persist_progress)
 
                     # Lists first, so their newly discovered employer boards join this same run.
                     sources = [s for s in self.db.sources() if s['enabled'] and s['provider']!='manual']

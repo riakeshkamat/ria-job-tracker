@@ -122,21 +122,28 @@ class Database:
         """One atomic source snapshot; failed/partial collection never reaches this method."""
         ts, new_count = now(), 0
         authoritative = source['provider'] in ('greenhouse', 'ashby', 'lever')
+        # Parse and classify before acquiring the SQLite write lock. Large boards must
+        # not hold the database transaction while doing CPU-heavy description work.
+        prepared=[]
+        for job in jobs:
+            result=classify(job['title'],job.get('description','') if authoritative else '',
+                            job.get('location',''),job.get('country',''),start_date)
+            prepared.append((job,canonical_url(job['apply_url']),result))
         with self.connect() as c:
             c.execute('UPDATE sightings SET misses=misses+1 WHERE source_id=?', (source['id'],))
-            for job in jobs:
-                url = canonical_url(job['apply_url'])
+            for job,url,result in prepared:
                 external_id = str(job['external_id'])
-                existing = c.execute('SELECT j.* FROM jobs j LEFT JOIN sightings s ON s.job_id=j.id '
-                                     'WHERE j.canonical_url=? OR (s.source_id=? AND s.external_id=?) LIMIT 1',
-                                     (url, source['id'], external_id)).fetchone()
+                existing = c.execute('SELECT * FROM jobs WHERE canonical_url=?',(url,)).fetchone()
+                if not existing:
+                    existing = c.execute('SELECT j.* FROM sightings s JOIN jobs j ON j.id=s.job_id '
+                                         'WHERE s.source_id=? AND s.external_id=?',
+                                         (source['id'],external_id)).fetchone()
                 job_id = existing['id'] if existing else str(uuid.uuid4())
                 description = job.get('description', '')
                 # A list-only sighting cannot overwrite an employer's full posting or visa evidence.
                 if existing and not authoritative:
                     c.execute('UPDATE jobs SET last_seen=? WHERE id=?', (ts, job_id))
                 else:
-                    result = classify(job['title'], description if authoritative else '', job.get('location',''), job.get('country',''), start_date)
                     values = dict(job_id=job_id, canonical_url=url, apply_url=job['apply_url'], title=job['title'],
                                   company=job['company'], location=job.get('location',''), country=job.get('country',''),
                                   description=description, description_hash=fingerprint(description), posted_at=job.get('posted_at'),
