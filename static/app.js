@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const state = {view:'edition', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, edition:null, editionId:'', pendingApply:sessionStorage.getItem('pending-application'), expanded:new Set(), requestId:0};
 const sourceState={offset:0,total:0,requestId:0};
+const plusState={account:null,savedModel:null,switching:false,pending:false};
 const filterFields={'search':'search','status':'status-filter','sponsorship':'sponsorship','role':'role-filter',
   'country':'country-filter','work_model':'work-filter','found_days':'found-filter','experience':'experience-filter','graduate':'graduate-filter','sort':'sort-filter'};
 const statuses = ['new','saved','applied','interview','offer','rejected','dismissed'];
@@ -171,6 +172,45 @@ async function loadJobs() {
   }
   renderJobs();
 }
+function renderPlus(p) {
+  const account=p.connected?p.email||'connected':null;
+  const changed=plusState.account!==account||plusState.savedModel!==p.model;
+  if(plusState.account!==account){plusState.switching=false;$('plus-manage').open=false;$('connect-instructions').open=false;}
+  plusState.account=account;plusState.savedModel=p.model;
+  if(changed){
+    const option=el('option',p.model_name||p.model||'Load available models');option.value=p.model||'';
+    $('model').replaceChildren(option);
+  }
+  const busy=p.busy||plusState.pending;
+  $('plus-status').textContent=p.connected?`Connected · ${p.email||'ChatGPT account'}`:'Not connected';
+  $('plus-status').className=p.connected?'connection-ready':'';
+  $('plus-description').textContent=p.connected
+    ? `${p.model_name||p.model||'Choose a model under Manage connection & model'}${p.model?' · Reviews run automatically after collection.':''} AI advice never hides jobs.`
+    : 'Connect Ria’s own account for advisory reviews. Daily job collection works without it.';
+  const reviewStatus=$('plus-review-status');
+  reviewStatus.hidden=!p.connected;reviewStatus.className='';
+  if(p.connected){
+    if(p.busy)reviewStatus.textContent='ChatGPT request in progress…';
+    else if(p.last_result?.status==='paused'){reviewStatus.textContent=p.last_result.message;reviewStatus.className='connection-warning';}
+    else if(p.last_success)reviewStatus.textContent=`Review verified · ${date(p.last_success.at,true)} Eastern · ${p.last_success.model}`;
+    else reviewStatus.textContent=p.model?'Ready for the first review.':'Choose and save a model to enable reviews.';
+    if(!p.busy&&p.last_result?.status==='success')reviewStatus.textContent+=' '+p.last_result.message;
+  }
+  $('plus-usage').hidden=!p.connected;
+  $('plus-usage').textContent=`${p.daily_used} of ${p.daily_limit} tracker requests used today · ${p.daily_remaining} remaining · Resets at 00:00 UTC. ChatGPT plan limits also apply.`;
+  $('model-controls').hidden=!p.connected;
+  $('connect-instructions').hidden=p.connected&&!plusState.switching;
+  $('review').disabled=busy||!p.model||p.daily_remaining===0;
+  $('review').textContent=p.busy?'ChatGPT working…':p.daily_remaining===0?'Daily review limit reached':'Review unclear jobs';
+  for(const id of ['load-models','disconnect','switch-account','import-plus','model'])$(id).disabled=busy;
+  $('save-model').disabled=busy||!$('model').value||$('model').value===p.model;
+  $('switch-account').textContent=plusState.switching?'Cancel account change':'Connect a different account';
+}
+async function plusAction(fn) {
+  if(plusState.pending)return;
+  plusState.pending=true;renderPlus(state.overview.plus);
+  try{await fn();}finally{plusState.pending=false;renderPlus(state.overview.plus);}
+}
 function renderOverview(o) {
   const latest=o.runs[0];
   let text;
@@ -183,10 +223,7 @@ function renderOverview(o) {
   $('schedule-info').textContent=o.schedule_enabled?'Sources are collected repeatedly through the day. Daily publication is separate and does not wait for a long crawl.':'Automatic collection and publication are disabled in this environment.';
   if(o.publication){const p=o.publication.preferences;if(document.activeElement!==$('publication-time'))$('publication-time').value=String(p.hour).padStart(2,'0')+':'+String(p.minute||0).padStart(2,'0');$('strict-cohort').checked=p.strict_cohort;}
   if(o.edition_error)$('schedule-info').textContent+=' '+o.edition_error.message;
-  const p=o.plus;
-  $('plus-status').textContent=p.connected?`Using ChatGPT plan · ${p.email||'Connected account'} · ${p.model||'Choose a model'} · up to ${p.daily_limit} requests per UTC day`:'Not connected. Daily collection does not require an AI subscription.';
-  if(p.last_result)$('plus-status').textContent+=' · '+p.last_result.message;
-  $('model-controls').hidden=!p.connected;
+  renderPlus(o.plus);
   $('run-history').replaceChildren();for(const run of o.runs){const row=el('div',undefined,'history-row');row.append(el('span',date(run.started_at,true)),el('strong',label(run.status)),el('span',`${run.success_count}/${run.source_count} sources · ${run.new_count} new`));if(run.error)row.append(el('span',run.error));$('run-history').append(row);}
 }
 async function loadOverview() {
@@ -200,7 +237,7 @@ async function loadSources() {
   const query=new URLSearchParams({search:$('source-search').value,health:$('source-health').value,offset:String(sourceState.offset),limit:'100'});
   const data=await api('/api/sources?'+query);if(requestId!==sourceState.requestId)return;$('sources-body').replaceChildren();
   sourceState.total=data.total;
-  $('connect-command').textContent=`.venv/bin/python -m tracker.connect --host-id ${data.host_id}`;
+  $('connect-command').textContent=`uv run --no-project --python 3.12 --with-requirements requirements.txt python -m tracker.connect --host-id ${data.host_id}`;
   $('sources-summary').textContent=`Source health · ${data.summary.enabled.toLocaleString()} enabled · ${data.summary.failed.toLocaleString()} need attention`;
   $('source-page-info').textContent=data.total?`${sourceState.offset+1}–${Math.min(sourceState.offset+100,data.total)} of ${data.total.toLocaleString()} sources`:'No sources match';
   $('source-previous').disabled=sourceState.offset===0;$('source-next').disabled=sourceState.offset+100>=data.total;
@@ -231,10 +268,40 @@ $('source-next').addEventListener('click',()=>action(async()=>{sourceState.offse
 $('add-job-button').addEventListener('click',()=>{$('add-job').hidden=!$('add-job').hidden;$('add-job-button').setAttribute('aria-expanded',String(!$('add-job').hidden));if(!$('add-job').hidden)$('add-job').querySelector('input').focus();});
 $('add-job').addEventListener('submit',event=>{event.preventDefault();action(async()=>{await api('/api/jobs',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(event.target)))});event.target.reset();$('add-job').hidden=true;$('add-job-button').setAttribute('aria-expanded','false');state.offset=0;await loadJobs();message('Job added as unverified. Recognized employer boards will be checked on the next refresh.');});});
 $('sign-out').addEventListener('click',()=>action(async()=>{await api('/api/logout',{method:'POST'});await start();}));
-$('import-plus').addEventListener('click',()=>action(async()=>{if(!$('plan-only').checked)throw new Error('Disable additional-credit fallback in ChatGPT settings, then confirm the checkbox.');const file=$('credential-file').files[0];if(!file||file.size>50000)throw new Error('Select the connection JSON file generated by the local helper.');const credentials=JSON.parse(await file.text());await api('/api/chatgpt/import',{method:'POST',body:JSON.stringify({credentials,plan_only_confirmed:true})});$('credential-file').value='';await loadOverview();message('ChatGPT connected. Load your available models and choose one. Delete the local transfer file.');}));
-$('load-models').addEventListener('click',()=>action(async()=>{const data=await api('/api/chatgpt/models');$('model').replaceChildren();for(const m of data.models){const option=el('option',m.name);option.value=m.id;$('model').append(option);}if(!data.models.length)throw new Error('No eligible models were returned for this account. Collection remains available.');}));
-$('save-model').addEventListener('click',()=>action(async()=>{await api('/api/chatgpt/model',{method:'POST',body:JSON.stringify({model:$('model').value})});await loadOverview();message('Model saved. Plus will review new unclear postings after daily collection.');}));
-$('review').addEventListener('click',()=>action(async()=>{await api('/api/chatgpt/review',{method:'POST'});message('ChatGPT review started. Collection and application links remain available.');}));
-$('disconnect').addEventListener('click',()=>action(async()=>{const data=await api('/api/chatgpt/disconnect',{method:'POST'});await loadOverview();message(data.message,!data.revoked);}));
-async function poll(){if(!$('app').hidden)await action(loadOverview);setTimeout(poll,state.overview?.collecting?3000:30000);}
+$('import-plus').addEventListener('click',()=>action(()=>plusAction(async()=>{
+  if(!$('plan-only').checked)throw new Error('Disable additional-credit fallback in ChatGPT settings, then confirm the checkbox.');
+  const file=$('credential-file').files[0];if(!file||file.size>50000)throw new Error('Select the connection JSON file generated by the local helper.');
+  const credentials=JSON.parse(await file.text());
+  await api('/api/chatgpt/import',{method:'POST',body:JSON.stringify({credentials,plan_only_confirmed:true})});
+  $('credential-file').value='';$('plan-only').checked=false;plusState.switching=false;$('connect-instructions').open=false;
+  await loadOverview();$('plus-manage').open=true;
+  message('ChatGPT connected. Refresh the model list, then choose and save a model. Delete the local connection file.');
+})));
+$('load-models').addEventListener('click',()=>action(()=>plusAction(async()=>{
+  const data=await api('/api/chatgpt/models');
+  if(!data.models.length)throw new Error('No eligible models were returned for this account. Collection remains available.');
+  const selected=$('model').value;
+  $('model').replaceChildren();
+  for(const m of data.models){const option=el('option',m.name);option.value=m.id;$('model').append(option);}
+  if(data.models.some(m=>m.id===selected))$('model').value=selected;
+  else $('model').selectedIndex=0;
+})));
+$('model').addEventListener('change',()=>renderPlus(state.overview.plus));
+$('save-model').addEventListener('click',()=>action(()=>plusAction(async()=>{
+  await api('/api/chatgpt/model',{method:'POST',body:JSON.stringify({model:$('model').value})});await loadOverview();
+  message('Model saved. ChatGPT will review new unclear postings after collection.');
+})));
+$('review').addEventListener('click',()=>action(()=>plusAction(async()=>{
+  await api('/api/chatgpt/review',{method:'POST'});await loadOverview();
+  message('ChatGPT review started. Its progress will appear in the connection panel.');
+})));
+$('switch-account').addEventListener('click',()=>{
+  plusState.switching=!plusState.switching;renderPlus(state.overview.plus);
+  $('connect-instructions').open=plusState.switching;
+  if(plusState.switching)$('connect-instructions').querySelector('summary').focus();
+});
+$('disconnect').addEventListener('click',()=>action(()=>plusAction(async()=>{
+  const data=await api('/api/chatgpt/disconnect',{method:'POST'});await loadOverview();message(data.message,!data.revoked);
+})));
+async function poll(){if(!$('app').hidden)await action(loadOverview);setTimeout(poll,state.overview?.collecting||state.overview?.plus?.busy?3000:30000);}
 restoreFilters();action(start);setTimeout(poll,3000);

@@ -304,6 +304,10 @@ def create_app(config=default_config,db=None):
                 plus.save(record)
                 db.set('plan_only_confirmed',True)
                 db.set('chatgpt_model',None)
+                db.set('chatgpt_model_name',None)
+                db.set('chatgpt_last_success',None)
+                db.set('chatgpt_last_result',None)
+                db.set('chatgpt_verification_migrated',True)
         except Exception:
             raise HTTPException(400,'Could not validate the OpenAI connection. Run the local sign-in helper again.') from None
         return {'ok':True}
@@ -314,6 +318,7 @@ def create_app(config=default_config,db=None):
         models=await plus.models()
         if data.get('model') not in {m['id'] for m in models}: raise HTTPException(400,'Choose a model from your account catalog')
         db.set('chatgpt_model',data['model'])
+        db.set('chatgpt_model_name',next(m['name'] for m in models if m['id']==data['model']))
         return {'ok':True}
 
     @app.post('/api/chatgpt/review',status_code=202)

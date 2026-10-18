@@ -32,9 +32,18 @@
         </form></details>
         <div id="unsupported"></div>
       </section>
-      <section><h3>Ria’s ChatGPT Plus</h3><p id="plus-status">Not connected.</p>
-        <p>Connect Ria’s own account for advisory reviews. Collection works without it. AI advice never hides jobs.</p>
+      <section id="plus-panel"><h3>Ria’s ChatGPT Plus</h3><p id="plus-status" role="status">Checking connection…</p>
+        <p id="plus-description">Connect Ria’s own account for advisory reviews. Collection works without it. AI advice never hides jobs.</p>
+        <p id="plus-review-status" role="status" hidden></p><p id="plus-usage" class="muted" hidden></p>
         <a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noopener noreferrer">Manage ChatGPT usage ↗</a>
+        <div id="model-controls" hidden>
+          <button id="review">Review unclear jobs</button>
+          <details id="plus-manage"><summary>Manage connection &amp; model</summary>
+            <label>Model<select id="model"><option value="">Load available models</option></select></label>
+            <div class="plus-actions"><button id="load-models">Refresh models</button><button id="save-model" disabled>Save model</button></div>
+            <div class="plus-actions"><button id="switch-account">Connect a different account</button><button id="disconnect">Disconnect</button></div>
+          </details>
+        </div>
         <details id="connect-instructions"><summary>Connect your ChatGPT plan</summary>
           <ol><li>In ChatGPT settings, disable <strong>Allow other apps to use credits after reaching your usage limit</strong>.</li>
             <li>From this project on your computer, run:<pre id="connect-command"></pre></li>
@@ -44,7 +53,6 @@
           <button id="import-plus">Import connection</button>
           <p class="muted">OpenAI account eligibility is required. No API keys are accepted. Never share or commit the connection file; delete it after import.</p>
         </details>
-        <div id="model-controls" hidden><label>Model<select id="model"><option value="">Load available models</option></select></label><button id="load-models">Load models</button><button id="save-model">Use selected model</button><button id="review">Review unclear jobs</button><button id="disconnect">Disconnect</button></div>
       </section>
     </div>
     <details><summary id="sources-summary">Source health</summary>

@@ -15,6 +15,7 @@ main{max-width:1220px;padding:32px 36px}h1{font-size:25px}.refresh-line{font-siz
 @media(max-width:550px){main{padding:20px 16px}.edition-heading{flex-direction:column;gap:14px}.edition-heading label{width:100%}#edition-panel{padding-top:20px}.main-filters label:last-child{grid-column:auto}.main-filters label:not(.search-label){width:100%}.views{gap:23px}.subtitle{max-width:32ch}.list-heading{margin-top:12px}}
 
 #edition-panel{padding:18px 0}.edition-heading h2{font-size:21px}#edition-window{margin-top:9px}#edition-progress{margin-top:7px}#edition-coverage{max-width:95ch}.main-filters{margin-top:16px}
+#model-controls{display:block}#plus-panel .connection-ready{color:var(--good);font-weight:600}#plus-panel .connection-warning{color:var(--warn)}#plus-status{overflow-wrap:anywhere}#plus-manage{border-top:1px solid var(--line);padding-top:8px}#plus-manage label{margin:8px 0}#plus-panel .plus-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}#plus-panel #connect-instructions>p{margin-top:10px}#plus-usage{font-size:11px}
 @media(max-width:650px){
  .main-filters,.main-filters:has(>label[hidden]){grid-template-columns:repeat(2,minmax(0,1fr))}.main-filters label{min-width:0}.main-filters select{width:100%;min-width:0}
  #jobs-table{min-width:0}#jobs-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}

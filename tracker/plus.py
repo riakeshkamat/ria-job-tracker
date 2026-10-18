@@ -97,8 +97,26 @@ class Plus:
 
     def status(self):
         r=self.record()
+        from .db import now
+        day=now()[:10]
+        usage=self.db.get('chatgpt_usage',{})
+        used=usage.get('count',0) if usage.get('day')==day else 0
+        success=self.db.get('chatgpt_last_success')
+        if r and not self.db.get('chatgpt_verification_migrated',False):
+            # Older versions saved grounded, completed reviews on jobs but did
+            # not retain a separate connection-verification record.
+            with self.db.connect() as c:
+                rows=c.execute("SELECT ai_review FROM jobs WHERE ai_review IS NOT NULL").fetchall()
+            for row in rows:
+                advice=json.loads(row['ai_review'])
+                if advice.get('reviewed_at') and advice.get('model')==self.db.get('chatgpt_model') and (not success or advice['reviewed_at']>success['at']):
+                    success={'at':advice['reviewed_at'],'model':advice['model']}
+            self.db.set('chatgpt_last_success',success)
+            self.db.set('chatgpt_verification_migrated',True)
         return {'connected':bool(r),'email':r.get('email') if r else None,
-                'model':self.db.get('chatgpt_model'), 'last_result':self.db.get('chatgpt_last_result'),
+                'model':self.db.get('chatgpt_model'),'model_name':self.db.get('chatgpt_model_name'),
+                'last_result':self.db.get('chatgpt_last_result'),'last_success':success if r else None,
+                'busy':self.lock.locked(),'daily_used':used,'daily_remaining':max(0,self.config.ai_limit-used),
                 'daily_limit':self.config.ai_limit,'plan_only_confirmed':self.db.get('plan_only_confirmed',False)}
 
     async def token(self,client):
@@ -200,6 +218,7 @@ class Plus:
                                 c.execute('UPDATE jobs SET ai_review=?,ai_hash=? WHERE id=? AND description_hash=?',
                                           (json.dumps(advice),job['description_hash'],job['id'],job['description_hash']))
                         await asyncio.to_thread(save_advice)
+                        await asyncio.to_thread(self.db.set,'chatgpt_last_success',{'at':advice['reviewed_at'],'model':model})
                         reviewed+=1
                         await asyncio.to_thread(self.db.set,'chatgpt_last_result',{'at':now(),'status':'running','message':f'{reviewed} descriptions reviewed; review continues.'})
                 await asyncio.to_thread(self.db.set,'chatgpt_last_result',{'at':now(),'status':'success','message':f'{reviewed} descriptions reviewed. Advisory only; no jobs hidden.'})
@@ -225,5 +244,9 @@ class Plus:
                     pass
             self.db.set('chatgpt_credentials',None)
             self.db.set('chatgpt_model',None)
+            self.db.set('chatgpt_model_name',None)
+            self.db.set('chatgpt_last_success',None)
+            self.db.set('chatgpt_last_result',None)
+            self.db.set('chatgpt_verification_migrated',True)
             self.db.set('plan_only_confirmed',False)
             return revoked
