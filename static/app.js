@@ -194,7 +194,7 @@ function renderPlus(p) {
     else if(p.last_result?.status==='paused'){reviewStatus.textContent=p.last_result.message;reviewStatus.className='connection-warning';}
     else if(p.last_success)reviewStatus.textContent=`Review verified · ${date(p.last_success.at,true)} Eastern · ${p.last_success.model}`;
     else reviewStatus.textContent=p.model?'Ready for the first review.':'Choose and save a model to enable reviews.';
-    if(!p.busy&&p.last_result?.status==='success')reviewStatus.textContent+=' '+p.last_result.message;
+    if(!p.busy&&!p.last_success&&p.last_result?.status==='success')reviewStatus.textContent+=' '+p.last_result.message;
   }
   $('plus-usage').hidden=!p.connected;
   $('plus-usage').textContent=`${p.daily_used} of ${p.daily_limit} tracker requests used today · ${p.daily_remaining} remaining · Resets at 00:00 UTC. ChatGPT plan limits also apply.`;
