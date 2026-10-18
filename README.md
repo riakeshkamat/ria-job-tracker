@@ -1,6 +1,6 @@
 # Ria Job Tracker
 
-A personal job finder and application tracker for Ria: Drexel BS in Business and Engineering, Finance minor, graduating June 2027. Targets business analysis, financial analysis/FP&A, data analysis, strategy, consulting and related business/finance graduate roles in the **US, Canada and UK**, with **0–3 years** required experience. No software engineering, resume-fit, industry or salary filtering. Python/FastAPI, plain JavaScript, SQLite, and no paid AI API-key path. The policy lives in `tracker/profile.py`.
+A personal job finder and application tracker for Ria: Drexel BS in Business and Engineering, Finance minor, graduating June 2027. Targets business analysis, financial analysis/FP&A, data analysis, strategy, consulting and related business/finance graduate roles in the **US, Canada and UK**, with **0–3 years** required experience. Software engineering roles are excluded; resume fit, industry and salary never filter jobs. Python/FastAPI, plain JavaScript, SQLite, and no paid AI API-key path. The policy lives in `tracker/profile.py`.
 
 ## Run locally
 
@@ -69,7 +69,7 @@ This implements OpenAI's documented **Sign in with ChatGPT / ChatGPT plan usage*
    .venv/bin/python -m tracker.connect --host-id HOST_ID_FROM_SETTINGS
    ```
 
-3. The helper starts a loopback callback. Choose **Ria’s own ChatGPT account/workspace** in OpenAI sign-in, requests plan-usage permission, checks state and PKCE, validates the signed identity token and nonce, and writes an owner-only connection file in ignored `data/ria/`.
+3. The helper starts a loopback callback. Choose **Ria’s own ChatGPT account/workspace** in OpenAI sign-in and grant plan-usage permission. The helper checks state and PKCE, validates the signed identity token and nonce, and writes an owner-only connection file in ignored `data/ria/`.
 4. Import that file in the tracker **over HTTPS**. It must contain the deployment's host ID. Server-side identity validation runs again; credentials are encrypted in SQLite. Delete the local transfer file after import. The remote deployment owns subsequent refreshes, avoiding rotating-token races.
 5. Load your account's model catalog and choose a model. Run **Review unclear jobs** to verify a successful inference before relying on scheduled review. The UI shows failures and account usage links.
 
