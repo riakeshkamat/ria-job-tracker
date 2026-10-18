@@ -2,17 +2,19 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .profile import PROFILE
+
 
 @dataclass
 class Config:
-    data_dir: Path = Path(os.getenv('DATA_DIR', './data'))
+    data_dir: Path = Path(os.getenv('DATA_DIR', './data/ria'))
     password: str = os.getenv('APP_PASSWORD', '')
     secret: str = os.getenv('APP_SECRET', '')
     production: bool = bool(os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('PRODUCTION') == 'true')
     schedule: bool = os.getenv('SCHEDULE_ENABLED', 'true').lower() == 'true'
     hour: int = int(os.getenv('DAILY_HOUR', '8'))
     timezone: str = os.getenv('DAILY_TIMEZONE', 'America/New_York')
-    start_date: str = os.getenv('START_DATE', '2027-06-01')
+    start_date: str = os.getenv('START_DATE', PROFILE.start_date)
     ai_limit: int = int(os.getenv('CHATGPT_DAILY_LIMIT', '30'))
     publication_hour: int = int(os.getenv('PUBLICATION_HOUR', '18'))
     publication_minute: int = int(os.getenv('PUBLICATION_MINUTE', '30'))
@@ -39,6 +41,8 @@ class Config:
             raise ValueError('Invalid publication cutoff or collection interval')
         from zoneinfo import ZoneInfo
         ZoneInfo(self.timezone)
+        from datetime import date
+        date.fromisoformat(self.start_date)
 
 
 config = Config()

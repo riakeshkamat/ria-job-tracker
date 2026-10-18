@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const state = {view:'edition', offset:0, total:0, jobs:[], overview:null, wasCollecting:false, edition:null, editionId:'', pendingApply:sessionStorage.getItem('pending-application'), expanded:new Set(), requestId:0};
 const sourceState={offset:0,total:0,requestId:0};
 const filterFields={'search':'search','status':'status-filter','sponsorship':'sponsorship','role':'role-filter',
-  'work_model':'work-filter','found_days':'found-filter','experience':'experience-filter','graduate':'graduate-filter','sort':'sort-filter'};
+  'country':'country-filter','work_model':'work-filter','found_days':'found-filter','experience':'experience-filter','graduate':'graduate-filter','sort':'sort-filter'};
 const statuses = ['new','saved','applied','interview','offer','rejected','dismissed'];
 const label = x => x.charAt(0).toUpperCase()+x.slice(1);
 function el(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text; if(cls)e.className=cls; return e; }
@@ -31,13 +31,13 @@ function detailRow(job) {
   const detail=el('div',undefined,'job-details');
   detail.append(el('h3','Eligibility evidence'));
   if(job.evidence.length) for(const evidence of job.evidence) detail.append(el('blockquote',evidence.quote));
-  else detail.append(el('p','The posting does not give clear sponsorship evidence. Verify OPT acceptance and future sponsorship with the employer.'));
+  else detail.append(el('p',(job.work_countries||[]).includes('US')?'The posting does not give clear sponsorship evidence. Verify OPT acceptance and future sponsorship with the employer.':'The posting does not give clear work-authorization evidence. Confirm local eligibility with the employer.'));
   for(const reason of job.scope_reasons||[])detail.append(el('p',reason));
   detail.append(el('p',`Original source locations: ${job.location||'Not supplied'}.`));
   detail.append(el('p',`Employer board last checked: ${job.verified_at?date(job.verified_at,true):'Not verified; discovered through a list or added manually'}. Availability: ${job.availability}.`));
   detail.append(el('p',`Source posting / publication date: ${date(job.posted_at)}. First found by this tracker: ${date(job.first_seen,true)}.`));
   const sources=el('p'); sources.textContent='Sources: '+job.sources.map(s=>`${s.name} (${s.last_error?'last refresh failed':s.misses?'absent from latest snapshot':'seen '+ago(s.last_seen)})`).join('; ');detail.append(sources);
-  if(job.eligibility){detail.append(el('h3','Why this job was published'));for(const proof of job.eligibility.evidence)detail.append(el('blockquote',proof));if(!job.eligibility.cohort_confirmed)detail.append(el('p','Entry-level role with no confirmed June 2027 start date. Check availability with the employer.'));}
+  if(job.eligibility){detail.append(el('h3','Why this job was published'));for(const warning of job.eligibility.warnings||[])detail.append(el('p',warning));for(const proof of job.eligibility.evidence)detail.append(el('blockquote',proof));if(!job.eligibility.cohort_confirmed)detail.append(el('p','Entry-level role with no confirmed June 2027 start date. Check availability with the employer.'));}
   if(job.ai_review) {
     detail.append(el('h3','ChatGPT advice (advisory)'));
     detail.append(el('p',`${label(job.ai_review.sponsorship)}: ${job.ai_review.note}`));
@@ -64,7 +64,7 @@ function renderEdition(data) {
   const edition=data.edition;
   $('edition-title').textContent=edition?new Date(edition.cutoff).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'America/New_York'}):'First edition coming soon';
   $('edition-window').textContent=edition?`${date(edition.window_start,true)} to ${date(edition.cutoff,true)} Eastern. Published ${date(edition.published_at,true)}.`:`Publishes ${date(data.next_cutoff,true)} Eastern, covering the preceding 24 hours.`;
-  $('edition-progress').textContent=edition?`${data.total} remaining · ${data.handled} applied or skipped · ${edition.total} published${data.withdrawn?' · '+data.withdrawn+' withdrawn after publication':''}`:'Up to 50 qualifying jobs. Fewer matches means a smaller edition.';
+  $('edition-progress').textContent=edition?`${data.total} remaining · ${data.handled} applied or skipped · ${edition.total} published${data.withdrawn?' · '+data.withdrawn+' withdrawn after publication':''}`:'Up to 100 qualifying jobs. Fewer matches means a smaller edition.';
   $('edition-coverage').textContent=edition?(edition.report.collection_running?'Collection was still running at cutoff. This edition includes only jobs verified before cutoff.':'Edition finalized. New discoveries will not be added to it.'):'Collecting and checking employer postings. Missing dates and unclear entry-level eligibility stay outside the edition.';
 }
 function renderJobs() {
@@ -74,7 +74,7 @@ function renderJobs() {
     const role=el('button',job.title,'role');role.type='button';role.setAttribute('aria-expanded',String(state.expanded.has(job.id)));role.setAttribute('aria-controls','detail-'+job.id);
     role.addEventListener('click',()=>{state.expanded.has(job.id)?state.expanded.delete(job.id):state.expanded.add(job.id);renderJobs();document.querySelector(`[aria-controls="detail-${job.id}"]`)?.focus();});
     const name=el('td');name.append(role,el('div',job.company,'company'));name.append(el('div',state.view==='edition'?`Published ${date(job.posted_at,true)} · ${job.eligibility?.cohort_confirmed?'2027 / start-date evidence':'Start date not stated'}`:`Found ${date(job.first_seen)} · ${job.min_years==null?'Experience not stated':`${job.min_years}+ years required`}`,'subtext'));row.append(name);
-    const location=el('td',job.us_location||job.location||'Location not supplied','location');if(job.work_model!=='unknown')location.append(el('div',label(job.work_model),'subtext'));row.append(location);
+    const location=el('td',job.location_label||job.location||'Location not supplied','location');if(job.work_model!=='unknown')location.append(el('div',label(job.work_model),'subtext'));row.append(location);
     const eligibility=el('td');eligibility.append(badge(job));if(job.availability!=='open')eligibility.append(el('div',job.availability==='closed'?'Absent from two employer snapshots':'Employer posting not verified','subtext'));
     else if(Date.now()-new Date(job.verified_at).getTime()>36*3600000)eligibility.append(el('div','Verification is stale','subtext'));
     row.append(eligibility);
@@ -104,11 +104,11 @@ function renderJobs() {
   if(!state.jobs.length) {
     const untouched=state.view==='review'&&!state.overview?.runs?.length&&$('clear-filters').hidden;
     $('empty').querySelector('h2').textContent=untouched?'No jobs collected yet':state.view==='saved'?'No saved jobs match':'No jobs match these filters';
-    $('empty').querySelector('p').textContent=untouched?'Refresh jobs to check the configured sources.':'Clear filters to see more US roles. Non-US and unconfirmed locations stay out of the main views.';
+    $('empty').querySelector('p').textContent=untouched?'Refresh jobs to check the configured sources.':'Clear filters to see more US, Canada and UK roles. Unconfirmed locations remain in the audit views.';
   }
   $('page-info').textContent=state.total?`${state.offset+1}–${Math.min(state.offset+100,state.total)} of ${state.total.toLocaleString()}`:'';
   $('previous').disabled=state.offset===0;$('next').disabled=state.offset+100>=state.total;
-  $('view-note').textContent=['excluded','closed','all'].includes(state.view)?'Audit view: may contain non-US or unconfirmed locations.':state.view==='tracked'?'Your application history.':state.view==='saved'?'Your shortlist of US roles.':$('unapplied-filter').checked?'Unapplied US roles. Unclear sponsorship stays visible.':'US location required. Unclear sponsorship stays visible.';
+  $('view-note').textContent=['excluded','closed','all'].includes(state.view)?'Audit view: may contain excluded roles, other countries or unconfirmed locations.':state.view==='tracked'?'Your application history.':state.view==='saved'?'Your saved roles in the US, Canada and UK.':$('unapplied-filter').checked?'Unapplied roles in the US, Canada and UK. Unclear sponsorship stays visible.':'US, Canada or UK location required. Unclear sponsorship stays visible.';
   $('unapplied-label').hidden=state.view!=='review';
   const daily=state.view==='edition';
   $('edition-panel').hidden=!daily;$('extra-filters').hidden=daily;
@@ -121,7 +121,7 @@ function renderJobs() {
       if(state.edition?.edition?.total===0)$('empty').querySelector('h2').textContent='No qualifying jobs in this edition';
       $('empty').querySelector('p').textContent=!state.edition?.edition?'Your list appears after the daily cutoff. We will not fill it with older or unverified jobs.':state.edition.edition.total===0?'No verified postings met the publication rules in this 24-hour window.':'Applied and skipped jobs stay removed. You can revisit earlier editions using the edition selector.';
     }
-  } else {$('previous').hidden=false;$('next').hidden=false;if(state.view==='review')$('view-note').textContent='Discovery queue. Dates, start dates, experience or employer evidence may be unconfirmed. These are not published matches.';}
+  } else {$('previous').hidden=false;$('next').hidden=false;if(state.view==='review')$('view-note').textContent='All relevant discoveries, including listings without verified publication dates. Experience, availability and authorization may need review.';}
 
 }
 function readFilters() {
@@ -142,7 +142,7 @@ function restoreFilters() {
   if(['edition','review','saved','tracked','excluded','closed','all'].includes(query.get('view')))state.view=query.get('view');
   state.editionId=query.get('edition_id')||'';
   for(const [key,id] of Object.entries(filterFields)) {
-    if(state.view==='edition'&&!['search','role','sponsorship'].includes(key))continue;
+    if(state.view==='edition'&&!['search','role','sponsorship','country'].includes(key))continue;
     const value=query.get(key);if(value===null)continue;
     if($(id).tagName==='INPUT')$(id).value=value.slice(0,200);
     else if(Array.from($(id).options).some(o=>o.value===value))$(id).value=value;
@@ -163,7 +163,7 @@ async function loadJobs() {
     data=await api('/api/edition?'+new URLSearchParams({edition_id:state.editionId}));if(requestId!==state.requestId)return;
     renderEdition(data);
     const term=$('search').value.trim().toLowerCase();
-    state.jobs=data.jobs.filter(job=>(!term||[job.title,job.company,job.location].join(' ').toLowerCase().includes(term))&&(!$('role-filter').value||job.role_family===$('role-filter').value)&&(!$('sponsorship').value||job.sponsorship===$('sponsorship').value));
+    state.jobs=data.jobs.filter(job=>(!term||[job.title,job.company,job.location].join(' ').toLowerCase().includes(term))&&(!$('role-filter').value||job.role_family===$('role-filter').value)&&(!$('sponsorship').value||job.sponsorship===$('sponsorship').value)&&(!$('country-filter').value||(job.work_countries||[]).includes($('country-filter').value)));
     state.total=state.jobs.length;
   } else {
     if(state.view==='review')query.set('view','feed');

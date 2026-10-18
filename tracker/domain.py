@@ -5,6 +5,8 @@ import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from .profile import PROFILE, ROLE_FAMILIES, TECHNICAL_ROLES
+
 class _Text(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -73,9 +75,13 @@ POSITIVE = [
     r'\b(?:we|company|employer)\s+(?:will|can|does)\s+(?:provide\s+|offer\s+)?(?:(?:visa|immigration|H[ -]?1B)\s+)?sponsor(?:ship)?\b',
     r'\b(?:offer|provide|offers|provides)\s+(?:visa|immigration)\s+sponsorship\b',
 ]
-ROLE = re.compile(r'\b(software|developer|swe|sde|backend|back.end|frontend|front.end|full.?stack|devops|sre|site reliability|data engineer|machine learning|ml engineer|ai engineer|cloud engineer|platform engineer|infrastructure engineer|production engineer|release engineer|forward.deployed engineer|security engineer|test engineer|quality engineer|qa engineer|automation engineer|systems engineer|embedded|firmware|quantitative developer|research engineer|application engineer)\b', re.I)
-EARLY = re.compile(r'\b(new[ -]?(?:college[ -]?)?grad(?:uate)?s?|entry[ -]?level|early[ -]?career|university grad(?:uate)?|graduate|junior|associate|engineer\s*(?:i|1))\b', re.I)
-SENIOR = re.compile(r'\b(senior|sr\.?|staff|principal|director|lead|manager|architect|engineer\s*(?:iii|iv|[4-9]))\b', re.I)
+ROLE = re.compile('|'.join(ROLE_FAMILIES.values()), re.I)
+EARLY = re.compile(r'\b(new[ -]?(?:college[ -]?)?grad(?:uate)?s?|entry[ -]?level|early[ -]?career|university grad(?:uate)?|graduate|junior|associate|trainee|rotational|analyst\s*(?:i|1))\b', re.I)
+SENIOR = re.compile(r'\b(senior|sr\.?|staff|principal|director|lead|manager|architect|vice president|vp|head of|(?:analyst|consultant)\s*(?:iii|iv|[4-9]))\b', re.I)
+
+
+def relevant_role(title):
+    return bool(ROLE.search(title)) and not re.search(TECHNICAL_ROLES, title, re.I)
 US_STATES = {'alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah','vermont','virginia','washington','west virginia','wisconsin','wyoming'}
 US_CODES = 'AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split()
 US_CITIES = {'san francisco','san jose','seattle','new york','boston','philadelphia','austin','chicago','palo alto','mountain view','sunnyvale','los angeles','san diego','santa clara','denver','atlanta','pittsburgh','washington dc','redmond','bellevue','menlo park','irvine'}
@@ -124,15 +130,87 @@ def location_status(location, country='', title=''):
     return result
 
 
-ROLE_FAMILIES={
-    'data':r'\b(?:data engineer|analytics engineer|data platform)\b',
-    'ai':r'\b(?:machine learning|ml engineer|ai engineer|research engineer|artificial intelligence)\b',
-    'quality':r'\b(?:qa|sdet|test|quality|automation)\b',
-    'infrastructure':r'\b(?:devops|sre|site reliability|cloud|infrastructure|platform|production|release)\b',
-    'security':r'\b(?:security|cybersecurity|cyber)\b',
-    'embedded':r'\b(?:embedded|firmware)\b',
-    'software':r'.*',
-}
+COUNTRY_ALIASES = {'US':'US','USA':'US','UNITED STATES':'US','UNITED STATES OF AMERICA':'US',
+                   'CA':'CA','CAN':'CA','CANADA':'CA','GB':'GB','GBR':'GB','UK':'GB',
+                   'UNITED KINGDOM':'GB','GREAT BRITAIN':'GB'}
+CANADA = re.compile(r'\b(?:canada|toronto|vancouver|montreal|ottawa|calgary|edmonton|winnipeg|quebec|nova scotia|new brunswick|british columbia|saskatchewan|manitoba|newfoundland|prince edward island|alberta)\b|,\s*(?-i:ON|BC|QC|AB|MB|SK|NS|NB|NL|PE)(?:\b|$)', re.I)
+UK = re.compile(r'\b(?:united kingdom|great britain|england|scotland|wales|northern ireland|UK|GB|GBR)\b', re.I)
+TARGET_EXCLUSION = re.compile(r'(?:\b(?:excluding|except|outside(?: of)?|not(?: (?:available|eligible))?(?: (?:in|to))?)\s+(?:the\s+)?|\bnon[- ]?)(United States|USA|US|Canada|CA|United Kingdom|UK|GB)\b',re.I)
+
+
+def _search_countries(location, country=''):
+    text=''.join(c for c in unicodedata.normalize('NFKD',location or '') if not unicodedata.combining(c))
+    canonical=COUNTRY_ALIASES.get((country or '').strip().upper())
+    # A country field from a single-location employer is authoritative. Multi-
+    # location adapters choose a supported country and preserve all location text.
+    if country and not canonical:
+        return []
+    exclusions={COUNTRY_ALIASES[m.group(1).upper()] for m in TARGET_EXCLUSION.finditer(text)}
+    text=TARGET_EXCLUSION.sub('',text)
+    countries=set()
+    parts=re.split(r'\s*[;·|/]\s*|\s+(?:or|and|&)\s+',text,flags=re.I)
+    for part in parts:
+        us=_location_signal(part)=='us'
+        if us:countries.add('US')
+        # Toronto, OH and Scotland, PA are US cities. Do not invent Canadian
+        # or UK options from their names and accidentally bypass US restrictions.
+        if us and US_STATE_CODE.search(part) and not re.search(r'\b(?:Canada|United Kingdom|UK|GB|Great Britain)\b',part,re.I):
+            continue
+        if CANADA.search(part):countries.add('CA')
+        if UK.search(part):countries.add('GB')
+    if canonical and countries and canonical not in countries:
+        return []
+    foreign=[m.group().lower() for m in FOREIGN.finditer(text)]
+    if canonical and not countries and foreign:
+        if canonical not in {'CA','GB'} or any(place!='london' for place in foreign):return []
+    if canonical:countries.add(canonical)
+    countries-=exclusions
+    return [code for code in PROFILE.countries if code in countries]
+
+
+def search_location(location, country='', title=''):
+    countries=_search_countries(location,country)
+    if countries and title:
+        suffix=re.search(r'\b(?:remote|based in|located in)\s*[:\-]?\s*(.+)$',title,re.I)
+        scopes=([suffix.group(1)] if suffix else [])+re.findall(r'\(([^)]+)\)',title)
+        for scope in scopes:
+            title_countries=_search_countries(scope)
+            if title_countries and not set(title_countries)&set(countries):
+                return 'unknown',[]
+            if not title_countries and _location_signal(scope)=='outside_us':
+                return 'unknown',[]
+    if countries:return {'US':'us','CA':'ca','GB':'uk'}[countries[0]],countries
+    if COUNTRY_ALIASES.get((country or '').upper()):return 'unknown',[]
+    outside=bool(country) or _location_signal(location)=='outside_us'
+    return ('outside_target' if outside else 'unknown'),[]
+
+
+def sponsorship_blocks(location, country, title, sponsorship):
+    """US restrictions filter US-only jobs. Canada/UK evidence remains visible."""
+    _,countries=search_location(location,country,title)
+    return countries==['US'] and sponsorship in {'restricted','conflict'}
+
+
+def experience_requirements(description):
+    """Mandatory minima, preserving alternative degree paths for human review."""
+    text=plain(description)
+    text=re.sub(r'\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)\s*\((\d{1,2})\)',r'\1',text,flags=re.I)
+    for number,word in enumerate(['zero','one','two','three','four','five','six','seven','eight','nine','ten']):
+        text=re.sub(r'\b'+word+r'(?=\s+(?:to\s+\w+\s+)?(?:years?|yrs?)\b)',str(number),text,flags=re.I)
+    requirements=[]
+    for sentence in re.split(r'[;\n]|(?<=[.!?])\s+',text):
+        pattern=r"\b(\d{1,2})\s*(?:(?:[-–]|to)\s*(\d{1,2})|\+|or more|or greater|plus)?\s*(?:years?|yrs?)[’']?\s+(?:of\s+)?(?:[^.;\n]{0,90}?\b)?(?:experience|building|developing|designing|shipping|working)\b"
+        for match in re.finditer(pattern,sentence,re.I):
+            context=sentence[max(0,match.start()-40):match.end()+35]
+            preferred=re.search(r'preferred|nice.to.have|bonus|desirable|not required',context,re.I)
+            required=re.search(r'\b(?:required|must|minimum|at least)\b',context.replace('not required',''),re.I)
+            if preferred and not required:continue
+            upper_bound=re.search(r'\b(?:up to|less than|at most|no more than|fewer than|maximum(?: of)?)\s*$',sentence[max(0,match.start()-25):match.start()],re.I)
+            requirements.append((0 if upper_bound else int(match.group(1)),sentence.strip()))
+        if not re.search(r'preferred|nice.to.have|bonus|desirable|not required',sentence,re.I):
+            for match in re.finditer(r'\b(\d{1,2})\+?\s+years?\s+(?:with|and)\s+(?:a\s+)?(?:bachelor|master|ph\.?d|doctoral)',sentence,re.I):
+                requirements.append((int(match.group(1)),sentence.strip()))
+    return requirements
 
 
 def job_attributes(title, location='', work_model=''):
@@ -140,7 +218,7 @@ def job_attributes(title, location='', work_model=''):
     if model not in {'remote','hybrid','onsite'}:
         match=re.search(r'\bhybrid\b',location or '',re.I) or re.search(r'\b(remote|on[ -]?site)\b',location or '',re.I)
         model=match.group(0).lower().replace('-','').replace(' ','') if match else 'unknown'
-    return {'role_family':next(k for k,p in ROLE_FAMILIES.items() if re.search(p,title,re.I)),
+    return {'role_family':next((k for k,p in ROLE_FAMILIES.items() if re.search(p,title,re.I)), 'other'),
             'work_model':model,'early_career':int(bool(EARLY.search(title)) and not SENIOR.search(title)),
             'cohort_2027':int(bool(re.search(r'\b2027\b',title) and EARLY.search(title)) and not SENIOR.search(title))}
 
@@ -155,7 +233,17 @@ def us_location_label(location, country='', work_model='unknown'):
     return ' · '.join(us_parts[:2])+(f' +{len(us_parts)-2} US locations' if len(us_parts)>2 else '')
 
 
-def classify(title, description, location='', country='', start_date='2027-06-01'):
+def location_label(location, country='', work_model='unknown'):
+    _,countries=search_location(location,country)
+    parts=re.split(r'\s*[;·]\s*',location or '')
+    supported=[part for part in parts if _search_countries(part)]
+    if not supported:
+        from .profile import COUNTRY_LABELS
+        return ' / '.join(COUNTRY_LABELS[code] for code in countries) or location or 'Location unconfirmed'
+    return ' · '.join(supported[:2])+(f' +{len(supported)-2} locations' if len(supported)>2 else '')
+
+
+def classify(title, description, location='', country='', start_date=PROFILE.start_date):
     text = plain(description)
     evidence = []
     for sentence in re.split(r'(?<=[!?;])\s+|\n+|(?<=[a-z0-9])\.\s+(?=[A-Z])', text):
@@ -168,37 +256,27 @@ def classify(title, description, location='', country='', start_date='2027-06-01
     sponsorship = 'conflict' if blocked and supports else 'restricted' if blocked else 'supported' if supports else 'unknown'
     reasons = []
     scope = True
-    if not ROLE.search(title):
+    if not relevant_role(title):
         scope = False
-        reasons.append('Outside software and related engineering titles')
-    if re.search(r'\bfront[ -]?end\b',title,re.I) and not re.search(r'\b(?:software|engineer|developer|programmer|swe|sde)\b',title,re.I):
-        scope=False
-        reasons.append('Front-end title does not identify a software engineering occupation')
-    if re.search(r'\b(land developer|property developer|mechanical|fluids|civil engineer|manufacturing.*quality|quality.*manufacturing)\b', title,re.I) and not re.search(r'software|firmware|embedded|automation',title,re.I):
-        scope = False
-        reasons.append('Explicit engineering specialty outside software-related roles')
+        reasons.append('Outside business, finance, data analysis and strategy roles; software engineering excluded')
     if SENIOR.search(title):
         scope = False
         reasons.append('Explicit seniority outside entry level')
-    if re.search(r'\b(interns?|internships?|co-op)\b', title, re.I):
+    if re.search(r'\b(interns?|internships?|co-op|industrial placement|year in industry|summer analyst|summer associate)\b', title, re.I):
         scope = False
         reasons.append('Internship, not a full-time graduate role')
     # Experience in the actual requirement, never unrelated numbers elsewhere in the posting.
-    years = []
-    for m in re.finditer(r'\b(\d{1,2})\s*(?:(?:[-–]|to)\s*\d{1,2}|\+)?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:[^.;\n]{0,90}?\b)?(?:experience|building|developing|designing|shipping|working)\b', text, re.I):
-        context = text[max(0, m.start()-70):m.end()+60]
-        if not re.search(r'preferred|nice.to.have|bonus|desirable', context, re.I):
-            years.append(int(m.group(1)))
-    min_years = min(years) if years else None
-    if min_years is not None and min_years > 3:
+    years = [years for years,_ in experience_requirements(text)]
+    min_years = max(years) if years else None
+    if min_years is not None and min_years > PROFILE.max_experience:
         scope = False
         reasons.append(f'Requires at least {min_years} years of experience')
     if min_years is None and not EARLY.search(title):
         reasons.append('Experience requirement needs verification')
-    loc = location_status(location, country, title)
-    if loc != 'us':
+    loc,countries = search_location(location, country, title)
+    if not countries:
         scope = False
-        reasons.append('Location is outside the US' if loc=='outside_us' else 'US work location is unconfirmed')
+        reasons.append('Location is outside the US, Canada and UK' if loc=='outside_target' else 'US, Canada or UK work location is unconfirmed')
     if re.search(r'\b202[0-6]\b', title) and not re.search(r'\b202[7-9]\b', title) and EARLY.search(title):
         scope = False
         reasons.append('Explicit graduate cohort predates 2027')
@@ -208,4 +286,4 @@ def classify(title, description, location='', country='', start_date='2027-06-01
             scope = False
             reasons.append('Explicit start date is before availability')
     return {'in_scope': int(scope), 'scope_reasons': reasons, 'min_years': min_years,
-            'location_status': loc, 'sponsorship': sponsorship, 'evidence': evidence}
+            'location_status': loc, 'work_countries': countries, 'sponsorship': sponsorship, 'evidence': evidence}

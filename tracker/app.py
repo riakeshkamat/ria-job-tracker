@@ -20,7 +20,8 @@ from .collector import Collector
 from .config import config as default_config
 from .db import Database,now
 from .domain import canonical_url,ROLE_FAMILIES
-from .editions import cutoff_for,next_cutoff
+from .editions import cutoff_for,next_cutoff,CAP
+from .profile import PROFILE
 from .plus import PlanError,Plus,verify_identity
 from .sources import load_seeds,validate_source
 
@@ -31,8 +32,7 @@ STATUSES={'new','saved','applied','interview','offer','rejected','dismissed'}
 def create_app(config=default_config,db=None):
     config.prepare()
     db=db or Database(config.data_dir/'tracker.sqlite3')
-    db.refresh_location_rules(config.start_date)
-    db.refresh_seniority_rules(config.start_date)
+    db.refresh_profile_rules(config.start_date)
     load_seeds(db)
     collector=Collector(db,config)
     plus=Plus(db,config)
@@ -46,7 +46,7 @@ def create_app(config=default_config,db=None):
         prefs=publication_preferences()
         return {**db.edition(edition_id,config.start_date,summary),'preferences':prefs,'timezone':config.timezone,
                 'next_cutoff':next_cutoff(datetime.now(timezone.utc),prefs['hour'],config.timezone,prefs.get('minute',0)).isoformat(),
-                'limit':50}
+                'limit':CAP}
 
     async def publish_loop():
         if not db.get('editions_enabled_at'):db.set('editions_enabled_at',now())
@@ -94,7 +94,7 @@ def create_app(config=default_config,db=None):
         for task in list(tasks): task.cancel()
         await asyncio.gather(*list(tasks),return_exceptions=True)
 
-    app=FastAPI(title='Open Job Tracker',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+    app=FastAPI(title='Ria Job Tracker',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
     app.state.db,app.state.collector,app.state.plus=db,collector,plus
     signing_key=hashlib.sha256((config.secret+config.password).encode()).digest()
 
@@ -183,15 +183,15 @@ def create_app(config=default_config,db=None):
     @app.get('/api/jobs')
     def jobs(view:str='feed',search:str='',status:str='',sponsorship:str='',offset:int=0,
              role:str='',work_model:str='',found_days:int=0,experience:str='',graduate:str='',
-             verified:bool=False,sort:str='recommended',unapplied:bool=False):
+             verified:bool=False,sort:str='recommended',unapplied:bool=False,country:str=''):
         if (view not in {'feed','saved','tracked','excluded','closed','all'} or status and status not in STATUSES
             or sponsorship not in {'','supported','unknown','conflict','restricted','review'}
-            or role and role not in ROLE_FAMILIES or work_model not in {'','remote','hybrid','onsite','unknown'}
+            or role and role not in ROLE_FAMILIES or country not in {'',*PROFILE.countries} or work_model not in {'','remote','hybrid','onsite','unknown'}
             or found_days not in {0,1,3,7,30} or experience not in {'','0','1','2','3','unknown'}
             or graduate not in {'','early','2027'} or sort not in {'recommended','newest','company','posted'}):
             raise HTTPException(400,'Invalid filter')
         return db.jobs(view,search[:200],status,sponsorship,100,max(offset,0),role=role,work_model=work_model,
-                       found_days=found_days,experience=experience,graduate=graduate,verified=verified,sort=sort,unapplied=unapplied)
+                       found_days=found_days,experience=experience,graduate=graduate,verified=verified,sort=sort,unapplied=unapplied,country=country)
 
     @app.patch('/api/jobs/{job_id}')
     async def update_job(job_id:str,request:Request):
@@ -243,7 +243,7 @@ def create_app(config=default_config,db=None):
         return {'runs':runs,'collecting':collector.lock.locked(),'source_count':summary['enabled'],
                 'failed_sources':summary['failed'],'coverage':summary,
                 'last_complete_refresh':db.get('last_complete_refresh'),'schedule_enabled':config.schedule,
-                'next_run':next_run.isoformat(),'start_date':config.start_date,
+                'next_run':next_run.isoformat(),'start_date':config.start_date,'profile':PROFILE.public(),
                 'publication':edition_info(summary=True),'edition_error':db.get('edition_error'),
                 'plus':plus.status()}
 

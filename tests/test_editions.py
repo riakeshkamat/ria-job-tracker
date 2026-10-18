@@ -19,7 +19,7 @@ END=datetime(2026,10,17,22,30,tzinfo=UTC)
 
 
 def job(i=1,**kw):
-    return dict(external_id=str(i),title=kw.pop('title',f'Software Engineer I, Team {i}'),company='Acme',
+    return dict(external_id=str(i),title=kw.pop('title',f'Business Analyst I, Team {i}'),company='Acme',
                 location='New York, NY',country='US',description=kw.pop('description','0-2 years of experience. Visa sponsorship is available.'),
                 apply_url=kw.pop('apply_url',f'https://jobs.ashbyhq.com/acme/{i}'),
                 posted_at=kw.pop('posted_at','2026-10-17T15:00:00+00:00'),posted_kind=kw.pop('posted_kind','employer_publication'),**kw)
@@ -38,10 +38,10 @@ def ingest(db,s,jobs):
 
 
 @pytest.mark.parametrize('title',[
-    'Principal Software Engineer I - Serverless - Platform Control Plane',
-    'Senior Software Engineer I','Senior Endpoint Security Engineer I (6701)',
-    'Sr. AI Engineer I (6811)','Associate Director, Software Engineering',
-    'Staff Software Engineer - Early Career Mentorship',
+    'Principal Business Analyst I - Serverless - Platform Control Plane',
+    'Senior Business Analyst I','Senior Endpoint Security Engineer I (6701)',
+    'Sr. AI Engineer I (6811)','Associate Director, Business Analysis',
+    'Staff Business Analyst - Early Career Mentorship',
 ])
 def test_screenshot_seniority_cannot_be_overridden(title):
     assert classify(title,'0-2 years of experience.','New York, NY')['in_scope']==0
@@ -49,30 +49,30 @@ def test_screenshot_seniority_cannot_be_overridden(title):
 
 
 @pytest.mark.parametrize('title,description,expected',[
-    ('Associate, Data Engineer','3+ years of experience.',False),
-    ('AWS Data Engineer (Associate)','1+ years of experience.',False),
-    ('Software Engineer I','8+ years of experience.',False),
-    ('Software Engineer I','1 or more years of experience.',False),
-    ('Software Engineer I',"Five (5) years’ experience required.",False),
-    ('Software Engineer I','Up to 3 years of experience.',True),
-    ('Software Engineer I','Two years of professional experience required.',False),
-    ('Software Engineer I','0-3 years of experience.',True),
-    ('Software Engineer I','No prior experience required.',True),
-    ('Software Engineer','0-2 years of professional experience.',True),
-    ('Software Engineer','Design great software.',False),
-    ('Software Engineer I','5 years of experience preferred.',True),
-    ('Software Engineer I','0 years with a PhD or 3 years with a Bachelors.',False),
-    ('Software Engineer PhD New Grad 2027','0 years of experience.',False),
-    ('Software Engineer I','Start date: January 2027.',False),
-    ('Software Engineer I','Starting June 2027.',True),
-    ('Software Engineer I','Immediate start required.',False),
-    ('Software Engineer I','Start date: Jan 2027.',False),
-    ('Software Engineer I','Starting February 31, 2027.',False),
-    ('Software Engineer I','A Masters degree is required.',False),
-    ('Software Engineer I','Must have a PhD in Computer Science.',False),
-    ('Software Engineer I','Bachelors or Masters degree required.',True),
-    ('Software Engineer I','Graduating in 2028 required.',False),
-    ('Software Engineer New Grad 2028','0 years of experience.',False),
+    ('Associate, Data Analyst','3+ years of experience.',True),
+    ('AWS Data Analyst (Associate)','1+ years of experience.',True),
+    ('Business Analyst I','8+ years of experience.',False),
+    ('Business Analyst I','1 or more years of experience.',True),
+    ('Business Analyst I',"Five (5) years’ experience required.",False),
+    ('Business Analyst I','Up to 3 years of experience.',True),
+    ('Business Analyst I','Two years of professional experience required.',True),
+    ('Business Analyst I','0-3 years of experience.',True),
+    ('Business Analyst I','No prior experience required.',True),
+    ('Business Analyst','0-2 years of professional experience.',True),
+    ('Business Analyst','Design great software.',True),
+    ('Business Analyst I','5 years of experience preferred.',True),
+    ('Business Analyst I','0 years with a PhD or 3 years with a Bachelors.',True),
+    ('Business Analyst PhD New Grad 2027','0 years of experience.',False),
+    ('Business Analyst I','Start date: January 2027.',False),
+    ('Business Analyst I','Starting June 2027.',True),
+    ('Business Analyst I','Immediate start required.',False),
+    ('Business Analyst I','Start date: Jan 2027.',False),
+    ('Business Analyst I','Starting February 31, 2027.',False),
+    ('Business Analyst I','A Masters degree is required.',False),
+    ('Business Analyst I','Must have a PhD in Computer Science.',False),
+    ('Business Analyst I','Bachelors or Masters degree required.',True),
+    ('Business Analyst I','Graduating in 2028 required.',False),
+    ('Business Analyst New Grad 2028','0 years of experience.',False),
 ])
 def test_daily_eligibility(title,description,expected):
     j={**job(title=title,description=description),'verified_at':'2026-10-17T17:00:00Z'}
@@ -92,13 +92,13 @@ def test_unknown_timestamps_never_become_24h_evidence(value):
     assert timestamp(value) is None
 
 
-def test_fixed_50_cap_without_topups(setup):
-    db,s=setup;ingest(db,s,[job(i) for i in range(70)])
+def test_fixed_100_cap_without_topups(setup):
+    db,s=setup;ingest(db,s,[job(i) for i in range(130)])
     edition_id=db.publish_edition(END,'2027-06-01',False)
-    result=db.edition();assert result['edition']['total']==50 and len(result['jobs'])==50
+    result=db.edition();assert result['edition']['total']==100 and len(result['jobs'])==100
     ids=[j['id'] for j in result['jobs']]
     db.decide(ids[0],{'status':'applied'});db.decide(ids[1],{'status':'dismissed'})
-    result=db.edition();assert result['total']==48 and result['handled']==2 and result['edition']['total']==50
+    result=db.edition();assert result['total']==98 and result['handled']==2 and result['edition']['total']==100
     assert db.publish_edition(END,'2027-06-01',True)==edition_id
     assert {j['id'] for j in result['jobs']}==set(ids[2:])
     with db.connect() as c:c.execute("UPDATE jobs SET description='Updated after cutoff' WHERE id=?",(ids[2],))
@@ -174,7 +174,7 @@ def test_630_eastern_cutoff_and_dst():
 
 
 def test_seniority_migration_retains_application_history(setup):
-    db,s=setup;ingest(db,s,[job(title='Senior Software Engineer I')])
+    db,s=setup;ingest(db,s,[job(title='Senior Business Analyst I')])
     with db.connect() as c:c.execute("UPDATE jobs SET in_scope=1,status='applied',notes='Keep this history'")
     db.refresh_seniority_rules('2027-06-01')
     row=db.jobs('all')['jobs'][0]
@@ -194,9 +194,9 @@ def test_publication_api_validates_settings_and_keeps_auth(setup,tmp_path):
 def test_jobright_public_list_is_discovery_without_inventing_a_timestamp():
     text='''| Company | Job Title | Location | Work Model | Date Posted |
 | --- | --- | --- | --- | --- |
-| **[Acme](https://example.com)** | **[Software Engineer I](https://jobright.ai/jobs/info/abc?utm_source=test)** | New York, NY, United States | Hybrid | Oct 17 |'''
+| **[Acme](https://example.com)** | **[Business Analyst I](https://jobright.ai/jobs/info/abc?utm_source=test)** | New York, NY, United States | Hybrid | Oct 17 |'''
     rows=parse_github(text,'Jobright public list')
-    assert len(rows)==1 and rows[0]['title']=='Software Engineer I'
+    assert len(rows)==1 and rows[0]['title']=='Business Analyst I'
     assert rows[0]['posted_at'] is None and rows[0]['work_model']=='Hybrid'
 
 
@@ -204,7 +204,7 @@ def test_smartrecruiters_public_feed_has_employer_details_and_dates():
     requests=[]
     def handle(request):
         requests.append(str(request.url))
-        row={'id':'123','name':'Software Engineer I','company':{'name':'Acme'},'releasedDate':'2026-10-17T15:00:00Z',
+        row={'id':'123','name':'Business Analyst I','company':{'name':'Acme'},'releasedDate':'2026-10-17T15:00:00Z',
              'location':{'country':'us','city':'New York','region':'NY'},'typeOfEmployment':{'label':'Full-time'}}
         if request.url.path.endswith('/123'):
             return httpx.Response(200,json={**row,'jobAd':{'sections':{'qualifications':{'text':'0-2 years of experience.'}}},'applyUrl':'https://jobs.smartrecruiters.com/Acme/123'})
@@ -219,10 +219,10 @@ def test_smartrecruiters_public_feed_has_employer_details_and_dates():
 
 
 def test_one_edition_per_local_day_even_if_cutoff_setting_changes(setup):
-    db,s=setup;ingest(db,s,[job(i) for i in range(70)])
+    db,s=setup;ingest(db,s,[job(i) for i in range(130)])
     first=db.publish_edition(END,'2027-06-01',False)
     assert db.publish_edition(END+timedelta(minutes=30),'2027-06-01',False)==first
-    assert db.edition()['edition']['total']==50
+    assert db.edition()['edition']['total']==100
 
 
 def test_employer_metadata_and_contracts_override_weak_title():
@@ -251,4 +251,4 @@ def test_known_old_calendar_date_is_not_reset_by_republishing(setup):
 
 @pytest.mark.parametrize('text',['No H-1B sponsorship.','We cannot provide H1B sponsorship.','U.S. person required.'])
 def test_explicit_future_sponsorship_and_person_restrictions(text):
-    assert classify('Software Engineer I',text,'New York, NY')['sponsorship']=='restricted'
+    assert classify('Business Analyst I',text,'New York, NY')['sponsorship']=='restricted'

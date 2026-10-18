@@ -9,7 +9,8 @@ from urllib.parse import unquote, urlsplit, urlencode
 import httpx
 from bs4 import BeautifulSoup
 
-from .domain import canonical_url, plain, ROLE, SENIOR
+from .domain import canonical_url, plain, relevant_role, SENIOR, COUNTRY_ALIASES
+from .profile import PROFILE
 from .catalog import DIRECTORIES, parse_directory
 
 ATS = {'greenhouse', 'ashby', 'lever', 'recruitee', 'smartrecruiters'}
@@ -24,7 +25,8 @@ def validate_source(provider, slug):
         if slug not in DIRECTORIES: raise ValueError('Unknown employer directory')
         return
     if provider in AGGREGATORS:
-        if slug != 'us-engineering': raise ValueError('Choose the US engineering feed')
+        allowed={'us-engineering','business-finance'} if provider!='himalayas' else {'us-engineering','us-business','ca-business','uk-business'}
+        if slug not in allowed: raise ValueError('Choose a supported business/finance country feed')
         return
     pattern = r'[\w.-]+/[\w.-]+(?:/[\w.-]+)*' if provider == 'github' else r'[\w.-]+'
     if not re.fullmatch(pattern, slug, flags=re.ASCII) or '..' in slug:
@@ -108,11 +110,12 @@ class Fetcher:
             parser = parse_community_json if filename.endswith('.json') else parse_github
             return await asyncio.to_thread(parser,response.text,source['name']), []
         if provider in AGGREGATORS:
-            return await self.aggregate(provider), []
+            country={'ca-business':'CA','uk-business':'GB'}.get(slug,'US')
+            return await self.aggregate(provider,country), []
         if provider == 'smartrecruiters':
             rows=[]
             for page in range(100):
-                data=(await self.get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100&offset={page*100}&country=us')).json()
+                data=(await self.get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100&offset={page*100}')).json()
                 if not isinstance(data,dict) or not isinstance(data.get('content'),list) or not isinstance(data.get('totalFound'),int):
                     raise ValueError('SmartRecruiters schema changed; snapshot rejected')
                 batch=data['content'];rows.extend(batch)
@@ -121,7 +124,7 @@ class Fetcher:
             else:raise ValueError('SmartRecruiters pagination limit reached')
             jobs=[]
             for row in rows:
-                if ROLE.search(row['name']) and not SENIOR.search(row['name']):
+                if relevant_role(row['name']) and not SENIOR.search(row['name']):
                     # Construct the endpoint; never follow arbitrary URLs from a feed.
                     identifier=str(row['id'])
                     if not identifier.isdigit():raise ValueError('Invalid SmartRecruiters posting ID')
@@ -158,7 +161,7 @@ class Fetcher:
                 return await asyncio.to_thread(lambda:[lever(j,source) for j in rows]), []
         raise ValueError('Lever pagination limit reached; partial snapshot rejected')
 
-    async def aggregate(self, provider):
+    async def aggregate(self, provider, country='US'):
         jobs, seen, cursors = [], set(), set()
         cursor = None
         for page in range(1,10001):
@@ -170,14 +173,14 @@ class Fetcher:
                 url = 'https://jobicy.com/api/v2/remote-jobs?' + urlencode(params)
             else:
                 url = 'https://himalayas.app/jobs/api/search?' + urlencode({
-                    'country':'US','seniority':'Entry-level,Mid-level','sort':'recent','page':page})
+                    'country':country,'seniority':'Entry-level,Mid-level','sort':'recent','page':page})
             data = (await self.get(url)).json()
             rows = data.get('jobs')
             if not isinstance(rows,list) or data.get('success') is False:
                 raise ValueError(f'{provider} schema changed; snapshot rejected')
             for row in rows:
                 item = aggregate_job(row,provider)
-                if not ROLE.search(item['title']): continue
+                if not relevant_role(item['title']): continue
                 if item['external_id'] not in seen:
                     seen.add(item['external_id']); jobs.append(item)
             if provider == 'remotive' or provider == 'himalayas' and not rows:
@@ -206,7 +209,7 @@ def ashby(j,source):
     locations = [j.get('location','')]+[s.get('location','') for s in secondary]
     countries = [((j.get('address') or {}).get('postalAddress') or {}).get('addressCountry','')]
     countries += [((s.get('address') or {}).get('postalAddress') or s.get('address') or {}).get('addressCountry','') for s in secondary]
-    country = 'US' if any(c in ('US','USA','United States') for c in countries) else next((c for c in countries if c),'')
+    country = preferred_country(countries)
     return dict(external_id=j.get('id') or j['jobUrl'], title=j['title'], company=source['name'],
                 location=' · '.join(x for x in locations if x),country=country,
                 description=j.get('descriptionPlain') or plain(j.get('descriptionHtml','')),
@@ -227,7 +230,7 @@ def lever(j,source):
 def recruitee(j,source):
     locations = j.get('locations') or []
     countries = [x.get('country_code') or x.get('country','') for x in locations]
-    country = 'US' if any(c in {'US','USA','United States'} for c in countries) else j.get('country_code') or j.get('country','')
+    country = preferred_country(countries) or j.get('country_code') or j.get('country','')
     location = ' · '.join(', '.join(str(x[k]) for k in ('city','state','country') if x.get(k)) for x in locations) or j.get('location','')
     return dict(external_id=str(j['id']),title=j['title'],company=j.get('company_name') or source['name'],
                 location=location,country=country,description=plain(j.get('description',''))+'\n'+plain(j.get('requirements','')),
@@ -260,7 +263,7 @@ def aggregate_job(j,provider):
                     apply_url=j['url'],posted_at=j.get('pubDate'),work_model='remote')
     countries=j.get('locationRestrictions') or []
     # Preserve the actual country restrictions. Empty means worldwide, not a US-only role.
-    country='US' if any(c in {'US','USA','United States'} for c in countries) else countries[0] if countries else ''
+    country=preferred_country(countries)
     from datetime import datetime,timezone
     posted=j.get('pubDate')
     if isinstance(posted,(int,float)): posted=datetime.fromtimestamp(posted,timezone.utc).isoformat()
@@ -346,3 +349,18 @@ def load_seeds(db):
     for source in json.loads(path.read_text()):
         validate_source(source['provider'],source['slug'])
         db.add_source(**source)
+    if db.get('ria_sources_version')!=1:
+        # Never clear jobs, notes, decisions or credentials as part of a source
+        # migration. A fresh deployment must have its own empty volume.
+        with db.connect() as c:
+            c.execute("UPDATE sources SET enabled=0 WHERE provider IN ('remotive','jobicy','himalayas') AND slug='us-engineering'")
+            old_lists=['vanshb03/New-Grad-2027','speedyapply/2027-SWE-College-Jobs/NEW_GRAD_USA.md',
+                       'ApplyGuy/2027-New-Grad-Jobs/data/new-grad-jobs.json','ricsign/Ricsign-New-Grads-Jobs-2027/data/v1/jobs.json',
+                       'jobright-ai/2026-Software-Engineer-New-Grad','jobright-ai/2026-Engineering-New-Grad']
+            c.executemany("UPDATE sources SET enabled=0 WHERE provider='github' AND slug=?",[(slug,) for slug in old_lists])
+        db.set('ria_sources_version',1)
+
+
+def preferred_country(countries):
+    normalized=[COUNTRY_ALIASES.get((c or '').upper(),c or '') for c in countries]
+    return next((code for code in PROFILE.countries if code in normalized),next((c for c in normalized if c),''))

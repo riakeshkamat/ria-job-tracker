@@ -41,7 +41,7 @@ def test_directory_and_newly_discovered_board_join_same_run(setup,monkeypatch):
     db.add_source('directory','open-ats','Directory')
     async def collect(self,source):
         if source['provider']=='directory':return [],[('ashby','acme','Acme')]
-        return [dict(external_id='1',title='Software Engineer I',company='Acme',location='New York',
+        return [dict(external_id='1',title='Business Analyst I',company='Acme',location='New York',
                      country='US',description='Visa sponsorship is available.',
                      apply_url='https://jobs.ashbyhq.com/acme/1')],[]
     monkeypatch.setattr(Fetcher,'collect',collect)
@@ -83,11 +83,11 @@ def test_source_pages_search_and_health_counts_are_global(setup):
 
 
 def test_community_feeds_keep_employer_links_not_apply_service():
-    data={'updatedAt':'2026-10-17','jobs':[dict(title='Software Engineer I',company='Acme',
+    data={'updatedAt':'2026-10-17','jobs':[dict(title='Business Analyst I',company='Acme',
           location='US',url='https://applyguy.ai/jobs/1',listingUrl='https://jobs.ashbyhq.com/acme/1')]}
     assert parse_community_json(json.dumps(data),'ApplyGuy')[0]['apply_url']=='https://jobs.ashbyhq.com/acme/1'
     data={'api_version':1,'jobs':[
-        dict(track='new-grad-swe',active=True,title='Software Engineer',company_name='Acme',apply_url='https://example.com/1'),
+        dict(track='new-grad-swe',active=True,title='Business Analyst',company_name='Acme',apply_url='https://example.com/1'),
         dict(track='internships',active=True),dict(track='new-grad-swe',active=False)]}
     assert len(parse_community_json(json.dumps(data),'Ricsign'))==1
     for slug in ['owner/repo/../data.json','owner/repo?x=1','owner/repo//data.json']:
@@ -98,7 +98,7 @@ def test_community_feeds_keep_employer_links_not_apply_service():
 def test_recruitee_multilocation_and_two_snapshot_closure(setup):
     config,db=setup
     db.add_source('recruitee','acme','Acme');source=db.sources()[0]
-    payload={'offers':[dict(id=1,title='Junior Software Engineer',locations=[dict(city='London',country='UK',country_code='GB'),
+    payload={'offers':[dict(id=1,title='Junior Business Analyst',locations=[dict(city='London',country='UK',country_code='GB'),
            dict(city='New York',country='United States',country_code='US')],
            description='<p>Visa sponsorship is available.</p>',requirements='0-2 years of experience.',
            careers_url='https://acme.recruitee.com/o/engineer',careers_apply_url='https://acme.recruitee.com/o/engineer/c/new')]}
@@ -117,7 +117,7 @@ def test_recruitee_multilocation_and_two_snapshot_closure(setup):
 def test_jobicy_cursor_traversal_and_loop_rejection(monkeypatch):
     async def no_pace(self,url):pass
     monkeypatch.setattr(Fetcher,'pace',no_pace)
-    item=dict(id=1,jobTitle='Software Engineer I',companyName='Acme',url='https://jobicy.com/jobs/1')
+    item=dict(id=1,jobTitle='Business Analyst I',companyName='Acme',url='https://jobicy.com/jobs/1')
     def handler(request):
         cursor=request.url.params.get('cursor')
         return httpx.Response(200,json={'jobs':[dict(item,id=2)] if cursor else [item],
@@ -133,7 +133,7 @@ def test_jobicy_cursor_traversal_and_loop_rejection(monkeypatch):
 def test_aggregate_expiry_never_becomes_employer_closure_and_cannot_overwrite_employer(setup):
     config,db=setup
     db.add_source('himalayas','us-engineering','Himalayas');aggregate=db.sources()[0]
-    item=dict(external_id='1',title='Software Engineer I',company='Acme',location='New York',country='US',
+    item=dict(external_id='1',title='Business Analyst I',company='Acme',location='New York',country='US',
               description='Community description',apply_url='https://jobs.ashbyhq.com/acme/1')
     db.ingest(aggregate,[item],None,config.start_date)
     db.ingest(aggregate,[],None,config.start_date);db.ingest(aggregate,[],None,config.start_date)
@@ -166,7 +166,7 @@ def test_himalayas_preserves_multicountry_scope_and_attribution():
 
 def test_aggregate_experience_scope_is_read_without_promoting_visa_claims(setup):
     config,db=setup;db.add_source('remotive','us-engineering','Remotive');s=db.sources()[0]
-    item=dict(external_id='1',title='Software Engineer',company='Acme',location='US',country='US',
+    item=dict(external_id='1',title='Business Analyst',company='Acme',location='US',country='US',
               description='Requires 6 years of experience. Visa sponsorship is available.',apply_url='https://remotive.com/jobs/1')
     db.ingest(s,[item],None,config.start_date)
     assert db.jobs()['total']==0

@@ -29,15 +29,17 @@ from tracker.sources import ashby,lever,recruitee
 ])
 def test_strict_location_signals(location,country,expected):
     assert location_status(location,country)==expected
-    assert bool(classify('Software Engineer','',location,country)['in_scope'])==(expected=='us')
+    # The US-only parser remains conservative; Ria also accepts Canada and UK.
+    allowed=expected=='us' or location in {'Boston, United Kingdom','London, UK','Canada'}
+    assert bool(classify('Business Analyst','',location,country)['in_scope'])==allowed
 
 
 def test_title_contradiction_is_not_treated_as_a_us_job():
-    title='Metaverse Software Engineer (Remote UK, Singapore, Dubai)'
+    title='Metaverse Business Analyst (Remote UK, Singapore, Dubai)'
     result=classify(title,'','United States','US')
     assert result['location_status']=='unknown' and result['in_scope']==0
     assert classify('AI Engineer (UAE)','','United States','US')['in_scope']==0
-    assert classify('Software Engineer (US Remote)','','United States','US')['in_scope']==1
+    assert classify('Business Analyst (US Remote)','','United States','US')['in_scope']==1
 
 
 @pytest.fixture
@@ -48,7 +50,7 @@ def setup(tmp_path):
 
 
 def posting(id,**kw):
-    return dict(external_id=str(id),title=kw.pop('title','Software Engineer'),company='Acme',
+    return dict(external_id=str(id),title=kw.pop('title','Business Analyst'),company='Acme',
                 location=kw.pop('location','New York, NY'),country=kw.pop('country','US'),
                 description=kw.pop('description','0-2 years of experience.'),
                 apply_url=f'https://jobs.ashbyhq.com/acme/{id}',**kw)
@@ -62,12 +64,12 @@ def test_existing_records_are_fixed_without_losing_notes_or_status(setup):
     db.refresh_location_rules(config.start_date)
     assert db.jobs()['total']==1
     hidden=db.jobs('all',search='Dubai')['jobs'][0]
-    assert hidden['location_status']=='outside_us' and hidden['in_scope']==0
+    assert hidden['location_status']=='outside_target' and hidden['in_scope']==0
     assert hidden['status']=='saved' and hidden['notes']=='Keep my notes'
     assert db.jobs('saved')['total']==0
-    assert db.get('us_location_migration')['changed']==1
+    assert db.get('seniority_migration')['reviewed']==2
     db.refresh_location_rules(config.start_date)
-    assert db.get('us_location_migration')['changed']==1
+    assert db.get('seniority_migration')['reviewed']==2
 
 
 def test_feed_saved_and_applications_enforce_us_even_on_legacy_stale_scope(setup):
@@ -83,9 +85,9 @@ def test_feed_saved_and_applications_enforce_us_even_on_legacy_stale_scope(setup
 
 def test_filters_combine_and_preserve_unknowns_until_user_filters_them(setup):
     config,db,s=setup
-    db.ingest(s,[posting(1,title='Software Engineer, New Grad 2027',work_model='remote',description='0-2 years of experience. Visa sponsorship is available.'),
-                 posting(2,title='Data Engineer',work_model='hybrid',description='2 years of experience.'),
-                 posting(3,title='QA Engineer',description=''),posting(4,title='Software Engineer',description='3 years of experience.')],None,config.start_date)
+    db.ingest(s,[posting(1,title='Business Analyst, New Grad 2027',work_model='remote',description='0-2 years of experience. Visa sponsorship is available.'),
+                 posting(2,title='Data Analyst',work_model='hybrid',description='2 years of experience.'),
+                 posting(3,title='Financial Analyst',description=''),posting(4,title='Business Analyst',description='3 years of experience.')],None,config.start_date)
     assert db.jobs()['total']==4
     assert db.jobs(role='data',work_model='hybrid',experience='2')['total']==1
     assert db.jobs(role='data',experience='1')['total']==0
@@ -94,21 +96,21 @@ def test_filters_combine_and_preserve_unknowns_until_user_filters_them(setup):
     assert db.jobs(graduate='2027',role='data')['total']==0
     old=(datetime.now(timezone.utc)-timedelta(days=8)).isoformat()
     with db.connect() as c:
-        c.execute("UPDATE jobs SET first_seen=? WHERE title='Data Engineer'",(old,))
-        c.execute("UPDATE jobs SET status='applied' WHERE title='QA Engineer'")
+        c.execute("UPDATE jobs SET first_seen=? WHERE title='Data Analyst'",(old,))
+        c.execute("UPDATE jobs SET status='applied' WHERE title='Financial Analyst'")
     assert db.jobs(found_days=7)['total']==3
     assert db.jobs(unapplied=True)['total']==3
     assert db.jobs('tracked')['total']==1
-    assert db.jobs(role='quality',status='applied',unapplied=True)['total']==1
+    assert db.jobs(role='finance',status='applied',unapplied=True)['total']==1
 
 
 def test_invalid_api_filters_rejected_and_bookmark_parameters_combine(setup):
     config,db,s=setup
-    db.ingest(s,[posting(1,title='Software Engineer, New Grad 2027',work_model='remote')],None,config.start_date)
+    db.ingest(s,[posting(1,title='Business Analyst, New Grad 2027',work_model='remote')],None,config.start_date)
     with TestClient(create_app(config,db)) as c:
         for query in ['role=evil','found_days=-1','sort=DROP','experience=10','graduate=nope','work_model=everywhere']:
             assert c.get('/api/jobs?'+query).status_code==400
-        d=c.get('/api/jobs?role=software&graduate=2027&work_model=remote&found_days=7&verified=true&unapplied=true&sort=newest').json()
+        d=c.get('/api/jobs?role=business&graduate=2027&work_model=remote&found_days=7&verified=true&unapplied=true&sort=newest').json()
         assert d['total']==1 and d['jobs'][0]['work_model']=='remote'
 
 
