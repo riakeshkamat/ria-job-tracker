@@ -18,10 +18,13 @@ class Config:
     publication_minute: int = int(os.getenv('PUBLICATION_MINUTE', '30'))
     strict_cohort: bool = os.getenv('STRICT_2027_COHORT', 'false').lower() == 'true'
     collection_interval: int = int(os.getenv('COLLECTION_INTERVAL_HOURS', '2'))
+    password_min_length: int = int(os.getenv('APP_PASSWORD_MIN_LENGTH', '12'))
 
     def prepare(self):
-        if self.production and (len(self.password) < 12 or len(self.secret) < 32):
-            raise RuntimeError('Set APP_PASSWORD (12+ characters) and APP_SECRET (32+ characters).')
+        if self.password_min_length < 8:
+            raise ValueError('APP_PASSWORD_MIN_LENGTH must be at least 8')
+        if self.production and (len(self.password) < self.password_min_length or len(self.secret) < 32):
+            raise RuntimeError(f'Set APP_PASSWORD ({self.password_min_length}+ characters) and APP_SECRET (32+ characters).')
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not self.secret:
             import secrets

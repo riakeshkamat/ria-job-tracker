@@ -46,7 +46,7 @@ The collector allows one active run per process. A separate publisher checks the
 
 1. Deploy the included Dockerfile to a Railway service.
 2. Attach a persistent volume at `/data` before first startup. Never rely on ephemeral deployment storage.
-3. Set `APP_PASSWORD` to at least 12 random characters and `APP_SECRET` to at least 32 random characters. Keep the same `APP_SECRET` across deployments; it encrypts saved OAuth credentials and signs sessions.
+3. Set `APP_PASSWORD` to at least 12 random characters and `APP_SECRET` to at least 32 random characters. The owner can explicitly lower `APP_PASSWORD_MIN_LENGTH` from its default of 12 to a minimum of 8 for a chosen password. Authentication remains required. Keep the same `APP_SECRET` across deployments; it encrypts saved OAuth credentials and signs sessions.
 4. Generate a Railway HTTPS domain. The service listens on Railway's `PORT` and exposes `/healthz` for process/database readiness.
 5. Keep one replica. The included `railway.toml` configures the Docker build, readiness check, and restart policy.
 

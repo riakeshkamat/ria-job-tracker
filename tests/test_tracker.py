@@ -267,3 +267,25 @@ def test_oauth_requires_fresh_state_and_registered_client_id():
             with pytest.raises(PlanError): await exchange(client,pending,{'state':'wrong'},'urn:uuid:test')
             with pytest.raises(PlanError): await exchange(client,pending,{'state':pending['state'],'code':'x'},'urn:uuid:test')
     asyncio.run(run())
+
+
+def test_owner_password_minimum_keeps_authentication_and_invalidates_old_sessions(tmp_path):
+    secret='x'*40
+    with pytest.raises(RuntimeError):
+        Config(data_dir=tmp_path,password='testpass',secret=secret,production=True,schedule=False).prepare()
+    for password,app_secret in [('',secret),('short',secret),('testpass','too-short')]:
+        with pytest.raises(RuntimeError):
+            Config(data_dir=tmp_path,password=password,secret=app_secret,production=True,schedule=False,password_min_length=8).prepare()
+    with pytest.raises(ValueError):
+        Config(data_dir=tmp_path,password='testpass',secret=secret,production=True,schedule=False,password_min_length=1).prepare()
+    original=Config(data_dir=tmp_path,password='original-test-password',secret=secret,production=True,schedule=False)
+    with TestClient(create_app(original),base_url='https://testserver') as c:
+        assert c.post('/api/login',json={'password':original.password},headers={'X-Tracker-Request':'1'}).status_code==200
+        cookie=c.cookies.get('tracker_session')
+    changed=Config(data_dir=tmp_path,password='testpass',secret=secret,production=True,schedule=False,password_min_length=8)
+    with TestClient(create_app(changed),base_url='https://testserver') as c:
+        assert c.get('/api/edition').status_code==401
+        assert c.get('/api/edition',headers={'Cookie':'tracker_session='+cookie}).status_code==401
+        assert c.post('/api/login',json={'password':original.password},headers={'X-Tracker-Request':'1'}).status_code==401
+        assert c.post('/api/login',json={'password':changed.password},headers={'X-Tracker-Request':'1'}).status_code==200
+        assert c.get('/api/edition').status_code==200
