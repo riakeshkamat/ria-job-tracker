@@ -5,7 +5,7 @@ This is a separate personal deployment on Sauransh's Railway subscription.
 - Project: `ria-job-tracker` (`c0cafce0-28c2-443b-8925-a8e979884bfb`)
 - Service: `web` (`f07052a9-9149-45a4-b247-8758d019364f`)
 - Environment: `production`
-- Site: https://web-production-dae89.up.railway.app
+- Site: https://ria-job-tracker.up.railway.app
 - New volume: `web-volume` (`baa99180-6dac-4f57-9560-b03c4fd7fcfd`), mounted at `/data`
 
 The volume starts empty. No application history, database, tracker password,
