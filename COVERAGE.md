@@ -17,36 +17,33 @@ Directory updates are downloaded on each collection run; upstream publication ca
 | Ashby | Listed public jobs | Employer description and two-snapshot closure checks |
 | Lever | All public pages, up to 10,000 postings per board | Employer description and two-snapshot closure checks |
 | Recruitee | Published offers, including requirements and multiple locations | Employer description and two-snapshot closure checks |
-| SmartRecruiters | All public US pages, with full descriptions for software titles without senior titles | ServiceNow, Western Digital and Bosch verified as reachable October 17; further boards discovered from application links |
+| SmartRecruiters | All public pages, with full descriptions for relevant business/finance titles without senior titles | ServiceNow, Western Digital and Bosch verified as reachable October 17; further boards discovered from application links |
 
 Public feed documentation: [Greenhouse](https://docs.greenhouse.io/job-board), [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api), [Lever](https://github.com/lever/postings-api), [Recruitee](https://docs.recruitee.com/reference/offers).
 
-## New-grad lists
+## New-grad and business lists
 
 1. [SimplifyJobs/New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions), README.
-2. [vanshb03/New-Grad-2027](https://github.com/vanshb03/New-Grad-2027), README.
-3. [SpeedyApply](https://github.com/speedyapply/2027-SWE-College-Jobs/blob/main/NEW_GRAD_USA.md), US new-graduate file; internship files are not imported.
-4. [ApplyGuy](https://github.com/ApplyGuy/2027-New-Grad-Jobs), machine-readable new-grad feed. Uses the employer's `listingUrl`, not the one-click-application service.
-5. [Ricsign](https://github.com/ricsign/Ricsign-New-Grads-Jobs-2027), machine-readable feed, active `new-grad-swe` track only.
+2. [Jobright business analyst](https://github.com/jobright-ai/2026-Business-Analyst-New-Grad).
+3. [Jobright accounting and finance](https://github.com/jobright-ai/2026-Account-New-Grad).
+4. [Jobright data analysis](https://github.com/jobright-ai/2026-Data-Analysis-New-Grad).
+5. [Jobright consulting](https://github.com/jobright-ai/2026-Consultant-New-Grad).
 
-These lists can surface employers using Workday, Microsoft Careers, Amazon Jobs, and other unsupported systems. Such records have application links but remain unverified by an employer feed. Community sponsorship annotations cannot establish eligibility or exclude jobs. Different lists overlap and may apply their own selection rules.
-
-6. [Jobright public SWE list](https://github.com/jobright-ai/2026-Software-Engineer-New-Grad). Despite the repository name, individual entries include 2027 roles; evaluate each posting.
-7. [Jobright public engineering list](https://github.com/jobright-ai/2026-Engineering-New-Grad). Software-related titles only.
-
-Jobright lists link back to Jobright. They provide unverified discovery only: the tracker does not scrape Jobright pages or invent timestamps from month/day labels. They cannot enter an edition until independently verified employer metadata is available.
+Repository year labels do not determine eligibility: individual posting titles and descriptions do. The inherited SWE-specific lists are disabled when upgrading the registry. List-only records stay in Discoveries until supported employer evidence exists. Jobright links remain on Jobright for attribution; its pages are not scraped and month/day labels never become invented publication timestamps. These lists may surface employers using Workday or other unsupported systems, which remain unverified. Community visa symbols are unverified hints.
 
 ## Remote-job feeds
 
 | Source | Scope | Limitations |
 |---|---|---|
-| [Remotive](https://github.com/remotive-com/remote-jobs-api) | Entire free public feed, software-related titles retained | Public listings are delayed 24 hours; links stay on Remotive for attribution/application access |
-| [Jobicy](https://github.com/Jobicy/remote-jobs-api) | Entire public seven-day feed, all cursor pages, software-related titles retained | Feed expiry does not mean a job closed; links stay on Jobicy |
-| [Himalayas](https://himalayas.app/api) | US search, Entry-level and Mid-level labels, all pages until empty | Results can shift during traversal and upstream seniority labels can be wrong; links stay on Himalayas |
+| [Remotive](https://github.com/remotive-com/remote-jobs-api) | Entire free public feed, business/finance/data-analysis/strategy titles retained | Public listings are delayed 24 hours; links stay on Remotive for attribution/application access |
+| [Jobicy](https://github.com/Jobicy/remote-jobs-api) | Entire public seven-day feed, all cursor pages, business/finance/data-analysis/strategy titles retained | Feed expiry does not mean a job closed; links stay on Jobicy |
+| [Himalayas](https://himalayas.app/api) | Separate US, Canada and UK searches, Entry-level and Mid-level labels, all pages until empty | Results can shift during traversal and upstream seniority labels can be wrong; links stay on Himalayas |
 
-The normal US, role, and experience rules apply. Worldwide or unspecified remote locations are excluded from the main views unless a US option is explicitly supported. A US label contradicted by a foreign region in the title is held out for review. Remote listings carry provider descriptions, are not employer-verified, and cannot overwrite authoritative employer evidence. No remote-feed disappearance is treated as a confirmed job closure. Source names and canonical provider links are preserved. This is a private personal tracker, not a public redistribution feed or signup collection service.
+US/Canada/UK location, business-role and 0–3-year experience rules apply. Worldwide or unspecified remote locations stay outside main views without explicit supported-country evidence. Contradictory country metadata and title regions are held out for review. Remote listings carry provider descriptions, are not employer-verified, and cannot overwrite authoritative employer evidence. No remote-feed disappearance is treated as a confirmed job closure. Source names and canonical provider links are preserved. This is a private personal tracker, not a public redistribution feed or signup collection service.
 
 ## Remaining gaps
+
+Business and finance recruitment is particularly common on Workday and employer-specific sites. Those systems are not comprehensively covered by the inherited public-board adapters. This tracker is broad monitored-source discovery, not exhaustive coverage of banking, consulting or graduate programmes in any country. Unsupported employer URLs can be tracked manually, but cannot enter a dated employer-verified edition.
 
 - LinkedIn and the Jobright search website are not automatically collected. Jobright public GitHub lists provide partial discovery. Broad employer coverage does not imply complete coverage of either platform.
 - No comprehensive direct crawling of Workday, iCIMS, Taleo, Workable, company-specific sites, or every large employer. New-grad lists can expose individual links from these systems, but there is no full daily employer snapshot for them.
@@ -55,9 +52,9 @@ The normal US, role, and experience rules apply. Worldwide or unspecified remote
 
 ## Daily-edition publication evidence
 
-At 6:30 PM America/New_York, one immutable edition selects at most 50 qualifying jobs from the previous local cutoff to this cutoff. Normal days contain 24 hours; the daylight-saving transition windows contain 23 or 25 hours so the local cutoff never drifts. The interval excludes its start and includes its end. Changes to cutoff settings never create a second edition on the same local date. Publication runs separately from long source crawls. On first activation the tracker waits for the next cutoff; it does not fabricate historical editions. After a restart a missed cutoff can be finalized from records already collected and employer-checked by that cutoff. It cannot reconstruct jobs missed during downtime.
+At 6:30 PM America/New_York, one immutable edition selects at most 100 qualifying jobs from the previous local cutoff to this cutoff. Normal days contain 24 hours; the daylight-saving transition windows contain 23 or 25 hours so the local cutoff never drifts. The interval excludes its start and includes its end. Changes to cutoff settings never create a second edition on the same local date. Publication runs separately from long source crawls. On first activation the tracker waits for the next cutoff; it does not fabricate historical editions. After a restart a missed cutoff can be finalized from records already collected and employer-checked by that cutoff. It cannot reconstruct jobs missed during downtime.
 
-An edition requires a timezone-aware employer publication timestamp in the window, a full employer description, a successful employer check during the window and before cutoff, explicit US location evidence, an entry-level title or zero-experience evidence, no mandatory positive experience requirement, no incompatible start/cohort/degree evidence, and no explicit or conflicting authorization restriction. A 0–1, 0–2, or 0–3 range can qualify; a mandatory 1+, 2+, or 3+ requirement cannot. Senior titles override Engineer I and Associate. Generic software titles with no experience evidence stay in review. Start dates and future sponsorship may be unstated and are labeled as unconfirmed; this is not a visa eligibility determination. Resume skills and fit scores never decide inclusion.
+An edition requires a timezone-aware employer publication timestamp in the window, a full employer description, a successful employer check during the window and before cutoff, positive US/Canada/UK geography, a relevant business/finance occupation, no mandatory experience minimum above three years, and no incompatible start/cohort/advanced-degree evidence. New-grad titles are prioritized; relevant generic analyst roles with missing experience stay visible with warnings. Mandatory 1+, 2+ and 3+ experience requirements can qualify and are labeled. Senior titles override Analyst I and Associate. Explicit/conflicting sponsorship restrictions exclude US-only roles; Canada/UK restrictions remain informational and do not establish personal eligibility. June 2027 availability and sponsorship may be unconfirmed and are labeled. Resume, skills, GPA, industry, compensation and fit scores never determine inclusion. Missing publication evidence stays in the uncapped, paginated Discoveries view; daily editions are never padded to 100.
 
 Greenhouse uses `first_published`; Ashby uses `publishedAt` (documented as last publication, not necessarily original opening); Recruitee uses `published_at`; SmartRecruiters uses `releasedDate`. The earliest observed timestamp is retained to avoid refreshing a known old job through republishing. A never-before-seen repost can still have a recent employer publication timestamp: original vacancy creation cannot be guaranteed. Lever has no publication timestamp in its public feed and remains review-only unless another authoritative source provides one. Aggregator/community dates alone never qualify. Missing dates, date-only labels, naive times, discovery dates, and update timestamps do not prove the 24-hour requirement.
 

@@ -26,7 +26,7 @@ class Collector:
         self.db, self.config = db,config
         self.lock = asyncio.Lock()
         self.client_factory = client_factory or (lambda: httpx.AsyncClient(timeout=httpx.Timeout(30,connect=10),
-            headers={'User-Agent':'OpenJobTracker/1.1 (public job board reader; personal use)'},limits=httpx.Limits(max_connections=12)))
+            headers={'User-Agent':'RiaJobTracker/1.0 (public job board reader; personal use)'},limits=httpx.Limits(max_connections=12)))
 
     def recover(self):
         with self.db.connect() as c:

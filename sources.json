@@ -1,15 +1,5 @@
 [
   {
-    "provider": "github",
-    "slug": "SimplifyJobs/New-Grad-Positions",
-    "name": "Simplify new-grad list"
-  },
-  {
-    "provider": "github",
-    "slug": "vanshb03/New-Grad-2027",
-    "name": "New Grad 2027 by V"
-  },
-  {
     "provider": "greenhouse",
     "slug": "stripe",
     "name": "Stripe"
@@ -110,21 +100,6 @@
     "name": "LastRound AI employer directory"
   },
   {
-    "provider": "github",
-    "slug": "speedyapply/2027-SWE-College-Jobs/NEW_GRAD_USA.md",
-    "name": "SpeedyApply US new-grad list"
-  },
-  {
-    "provider": "github",
-    "slug": "ApplyGuy/2027-New-Grad-Jobs/data/new-grad-jobs.json",
-    "name": "ApplyGuy US new-grad list"
-  },
-  {
-    "provider": "github",
-    "slug": "ricsign/Ricsign-New-Grads-Jobs-2027/data/v1/jobs.json",
-    "name": "Ricsign new-grad SWE list"
-  },
-  {
     "provider": "lever",
     "slug": "palantir",
     "name": "Palantir"
@@ -133,21 +108,6 @@
     "provider": "ashby",
     "slug": "lumaai",
     "name": "Luma AI"
-  },
-  {
-    "provider": "remotive",
-    "slug": "us-engineering",
-    "name": "Remotive"
-  },
-  {
-    "provider": "jobicy",
-    "slug": "us-engineering",
-    "name": "Jobicy"
-  },
-  {
-    "provider": "himalayas",
-    "slug": "us-engineering",
-    "name": "Himalayas"
   },
   {
     "provider": "smartrecruiters",
@@ -166,12 +126,52 @@
   },
   {
     "provider": "github",
-    "slug": "jobright-ai/2026-Software-Engineer-New-Grad",
-    "name": "Jobright public SWE list"
+    "slug": "SimplifyJobs/New-Grad-Positions",
+    "name": "Simplify new-grad list"
   },
   {
     "provider": "github",
-    "slug": "jobright-ai/2026-Engineering-New-Grad",
-    "name": "Jobright public engineering list"
+    "slug": "jobright-ai/2026-Business-Analyst-New-Grad",
+    "name": "Jobright public business analyst list"
+  },
+  {
+    "provider": "github",
+    "slug": "jobright-ai/2026-Account-New-Grad",
+    "name": "Jobright public accounting and finance list"
+  },
+  {
+    "provider": "remotive",
+    "slug": "business-finance",
+    "name": "Remotive business and finance discovery"
+  },
+  {
+    "provider": "jobicy",
+    "slug": "business-finance",
+    "name": "Jobicy business and finance discovery"
+  },
+  {
+    "provider": "himalayas",
+    "slug": "us-business",
+    "name": "Himalayas US business roles"
+  },
+  {
+    "provider": "himalayas",
+    "slug": "ca-business",
+    "name": "Himalayas Canada business roles"
+  },
+  {
+    "provider": "himalayas",
+    "slug": "uk-business",
+    "name": "Himalayas UK business roles"
+  },
+  {
+    "provider": "github",
+    "slug": "jobright-ai/2026-Data-Analysis-New-Grad",
+    "name": "Jobright public data analysis list"
+  },
+  {
+    "provider": "github",
+    "slug": "jobright-ai/2026-Consultant-New-Grad",
+    "name": "Jobright public consulting list"
   }
 ]

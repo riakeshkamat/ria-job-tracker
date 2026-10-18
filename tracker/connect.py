@@ -18,7 +18,7 @@ from .plus import authorization,exchange
 def main():
     parser=argparse.ArgumentParser(description='Connect your ChatGPT plan using the documented open-source sign-in flow')
     parser.add_argument('--host-id',required=True,help='Host ID shown in tracker settings; use the Railway host ID for a Railway deployment')
-    parser.add_argument('--output',default='data/chatgpt.credentials.json')
+    parser.add_argument('--output',default='data/ria/chatgpt.credentials.json')
     args=parser.parse_args()
     callback={}
 

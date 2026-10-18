@@ -12,7 +12,7 @@ from tracker.sources import ashby,lever
 
 
 def test_nullable_ashby_location_is_valid():
-    result=ashby({'title':'Software Engineer','jobUrl':'https://jobs.ashbyhq.com/acme/1',
+    result=ashby({'title':'Business Analyst','jobUrl':'https://jobs.ashbyhq.com/acme/1',
                   'address':None,'secondaryLocations':[{'location':'New York','address':None}],
                   'descriptionPlain':'0-2 years of experience'}, {'name':'Acme'})
     assert result['location']=='New York'
@@ -20,7 +20,7 @@ def test_nullable_ashby_location_is_valid():
 
 
 def test_nullable_lever_country_is_unknown_not_a_failed_snapshot():
-    result=lever({'id':'123','text':'Software Engineer','categories':{'location':None},'country':None,
+    result=lever({'id':'123','text':'Business Analyst','categories':{'location':None},'country':None,
                   'description':None,'lists':None,'hostedUrl':'https://jobs.lever.co/acme/123'}, {'name':'Acme'})
     assert result['country']=='' and result['location']==''
 
@@ -32,7 +32,7 @@ def test_review_requires_completed_grounded_stream_and_reserves_usage(tmp_path,m
     db=Database(tmp_path/'test.sqlite3')
     sid=db.add_source('ashby','acme','Acme')
     source=next(s for s in db.sources() if s['id']==sid)
-    job={'external_id':'1','title':'Software Engineer New Grad 2027','company':'Acme','location':'New York',
+    job={'external_id':'1','title':'Business Analyst New Grad 2027','company':'Acme','location':'New York',
          'country':'US','description':'OPT eligibility will be assessed individually.','apply_url':'https://jobs.ashbyhq.com/acme/1'}
     db.ingest(source,[job],None,'2027-06-01')
     plus=Plus(db,config)

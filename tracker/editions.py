@@ -3,10 +3,11 @@ import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .domain import classify, EARLY, SENIOR, fingerprint, plain
+from .domain import classify, EARLY, SENIOR, fingerprint, plain, experience_requirements, sponsorship_blocks
+from .profile import PROFILE
 
-POLICY_VERSION = 1
-CAP = 50
+POLICY_VERSION = 2
+CAP = PROFILE.daily_cap
 
 
 def timestamp(value):
@@ -49,10 +50,10 @@ def eligibility(job, start_date='2027-06-01', strict_cohort=True):
     evidence = []
     if not job.get('verified_at') or not description.strip():
         reasons.append('Full employer posting has not been verified')
-    if result['sponsorship'] in {'restricted', 'conflict'} or job.get('sponsorship') in {'restricted', 'conflict'}:
+    if any(sponsorship_blocks(job.get('location',''),job.get('country',''),title,value) for value in (result['sponsorship'],job.get('sponsorship'))):
         reasons.append('Work authorization or future sponsorship is restricted or conflicting')
     if SENIOR.search(title):
-        reasons.append('Senior title cannot qualify through an Engineer I or Associate suffix')
+        reasons.append('Senior title cannot qualify through an Analyst I or Associate suffix')
     if re.search(r'\b(?:grad\w*|entry[ -]level|early[ -]career)\b[^\n]{0,80}\b202[89]\b|\b202[89]\b[^\n]{0,80}\bgrad\w*\b', title, re.I) and not re.search(r'\b2027\b', title):
         reasons.append('Explicit graduate cohort is later than 2027')
     if re.search(r'\b(?:internship|intern|co-op|part[ -]?time|contractor|contract|temporary)\b', title, re.I) or re.sub('[^a-z]','',job.get('employment_type', '').lower()) in {'intern', 'internship', 'parttime', 'contract', 'contractor', 'temporary','fixedterm'}:
@@ -68,32 +69,24 @@ def eligibility(job, start_date='2027-06-01', strict_cohort=True):
             and not re.search(r"\b(?:bachelor'?s?|undergraduate|B\.?S\.?)\b",sentence,re.I)):
             reasons.append('Required advanced degree has no stated bachelor-degree path')
 
-    # Associate/Engineer I are weak hints, not permission to ignore required experience.
-    text = description
-    text=re.sub(r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*\((\d{1,2})\)',r'\1',text,flags=re.I)
-    for word, number in [('zero', '0'), ('one', '1'), ('two', '2'), ('three', '3'), ('four', '4'), ('five', '5'), ('six', '6'), ('seven', '7'), ('eight', '8'), ('ten', '10')]:
-        text = re.sub(r'\b' + word + r'(?=\s+(?:to\s+\w+\s+)?years?\b)', number, text, flags=re.I)
-    requirements = []
-    for sentence in re.split(r'[;\n]|(?<=[.!?])\s+', text):
-        if not re.search(r'preferred|nice.to.have|bonus|desirable|not required',sentence,re.I):
-            for match in re.finditer(r'\b(\d{1,2})\+?\s+years?\s+(?:with|and)\s+(?:a\s+)?(?:bachelor|master|ph\.?d|doctoral)',sentence,re.I):
-                requirements.append((int(match.group(1)),sentence.strip()))
-        for match in re.finditer(r"\b(\d{1,2})\s*(?:(?:[-–]|to)\s*(\d{1,2})|\+|or more|or greater|plus)?\s*(?:years?|yrs?)[’']?\s+(?:of\s+)?(?:[^.;\n]{0,90}?\b)?(?:experience|building|developing|designing|shipping|working)\b", sentence, re.I):
-            context=sentence[max(0,match.start()-40):match.end()+35]
-            if re.search(r'preferred|nice.to.have|bonus|desirable|not required', context, re.I) and not re.search(r'\b(?:required|must|minimum|at least)\b',context.replace('not required',''),re.I):
-                continue
-            upper_bound=re.search(r'\b(?:up to|less than|at most|no more than|fewer than|maximum(?: of)?)\s*$',sentence[max(0,match.start()-25):match.start()],re.I)
-            requirements.append((0 if upper_bound else int(match.group(1)), sentence.strip()))
-    # Hold alternatives for review rather than choosing a low requirement that needs a Masters/PhD.
-    if any(years > 0 for years, _ in requirements):
-        reasons.append('Posting requires prior experience; not confirmed open to a zero-experience graduate')
-    elif requirements:
-        evidence.append(next(sentence for years, sentence in requirements if years == 0))
+    requirements = experience_requirements(description)
+    if any(years > PROFILE.max_experience for years, _ in requirements):
+        reasons.append(f'Posting requires more than {PROFILE.max_experience} years of experience')
+    evidence.extend(sentence for years,sentence in requirements if years <= PROFILE.max_experience)
     explicit = bool(EARLY.search(title))
-    if not explicit and not any(years == 0 for years, _ in requirements) and not re.search(r'\b(?:no (?:prior |professional )?experience (?:is )?(?:required|necessary)|recent graduates? (?:are )?(?:welcome|encouraged))\b', text, re.I):
-        reasons.append('No explicit new-grad or zero-experience eligibility evidence')
-    elif explicit:
+    if explicit:
         evidence.append(title)
+    # Unknown experience remains discoverable, with uncertainty exposed. Never
+    # turn an absence of requirements into a claim of zero-experience eligibility.
+    warnings=[]
+    if not requirements and not explicit:
+        warnings.append('Experience requirement is not stated; verify entry-level suitability')
+    if any(years > 0 for years,_ in requirements):
+        warnings.append('Prior experience is requested; assess transferable experience before applying')
+    if result['sponsorship']=='unknown':
+        warnings.append('Sponsorship and local work authorization are unconfirmed')
+    if result['location_status'] in {'ca','uk'}:
+        warnings.append('Canada/UK authorization restrictions are informational; personal eligibility is unverified')
 
     # A year elsewhere in boilerplate is not a graduation requirement.
     cohort = bool(re.search(r'\b2027\b', title) and re.search(r'\b(?:grad(?:uate|uation|uates)?|entry[ -]level|early[ -]career|start|university|campus)\b', title, re.I))
@@ -106,7 +99,7 @@ def eligibility(job, start_date='2027-06-01', strict_cohort=True):
             if years and '2027' not in years:
                 reasons.append('Explicit graduation-year requirement does not include 2027')
     availability = datetime.fromisoformat(start_date).date()
-    if re.search(r'\b(?:immediate start|start immediately|start as soon as possible|must be available immediately)\b', description, re.I):
+    if availability > datetime.now(timezone.utc).date() and re.search(r'\b(?:immediate start|start immediately|start as soon as possible|must be available immediately)\b', description, re.I):
         reasons.append('Posting requires an immediate start before availability')
     months = {name[:3].lower(): i for i, name in enumerate(['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'], 1)}
     month_pattern=r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
@@ -123,4 +116,5 @@ def eligibility(job, start_date='2027-06-01', strict_cohort=True):
         reasons.append('Graduation deadline precedes June 2027')
     if strict_cohort and not cohort:
         reasons.append('June 2027 cohort or compatible start date is unconfirmed')
-    return {'eligible': not reasons, 'reasons': list(dict.fromkeys(reasons)), 'evidence': list(dict.fromkeys(evidence)), 'cohort_confirmed': cohort}
+    if not cohort:warnings.append('June 2027 or later start date is unconfirmed')
+    return {'eligible': not reasons, 'reasons': list(dict.fromkeys(reasons)), 'evidence': list(dict.fromkeys(evidence)), 'warnings':warnings, 'cohort_confirmed': cohort}

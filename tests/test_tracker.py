@@ -27,7 +27,7 @@ def db(config): return Database(config.data_dir/'test.sqlite3')
 
 
 def job(**overrides):
-    return dict(external_id='123',title='Software Engineer, New Grad 2027',company='Acme',location='New York, NY',
+    return dict(external_id='123',title='Business Analyst, New Grad 2027',company='Acme',location='New York, NY',
                 country='US',description='0-3 years of experience. Visa sponsorship is available.',
                 apply_url='https://jobs.ashbyhq.com/acme/123/apply',posted_at=None,**overrides)
 
@@ -48,7 +48,7 @@ def source(db,provider='ashby',slug='acme'):
     'No visa sponsorship is available.',
 ])
 def test_explicit_restrictions(text):
-    result=classify('Software Engineer I',text,'Seattle, WA')
+    result=classify('Business Analyst I',text,'Seattle, WA')
     assert result['sponsorship']=='restricted'
     assert result['evidence'][0]['quote'] in text
 
@@ -64,31 +64,31 @@ def test_explicit_restrictions(text):
     'OPT candidates are welcome.',
 ])
 def test_unclear_information_never_becomes_a_promise_or_restriction(text):
-    assert classify('Software Engineer',text,'Remote')['sponsorship']=='unknown'
+    assert classify('Business Analyst',text,'Remote')['sponsorship']=='unknown'
 
 
 def test_conflicting_evidence_stays_visible():
-    result=classify('Software Engineer I','Visa sponsorship is available. We cannot sponsor this position.','New York')
+    result=classify('Business Analyst I','Visa sponsorship is available. We cannot sponsor this position.','New York')
     assert result['sponsorship']=='conflict'
     assert result['in_scope']==1
 
 
 def test_broad_entry_level_scope():
-    for title in ['Data Engineer','Machine Learning Engineer','Backend Developer','SRE','Software Engineer II','QA Engineer']:
+    for title in ['Data Analyst','FP&A Analyst','Strategy Analyst','Business Intelligence Analyst','Business Analyst II','Reporting Analyst']:
         assert classify(title,'0-3 years of professional experience.','Philadelphia, PA')['in_scope']==1
-    assert classify('Senior Software Engineer','6 years of experience','New York')['in_scope']==0
-    assert classify('Software Engineer','5 years of experience','New York')['in_scope']==0
-    assert classify('Software Engineer','5 years of experience or 2 years of experience with a Masters','New York')['in_scope']==1
-    assert classify('Software Engineering Intern','0 years of experience','New York')['in_scope']==0
-    assert classify('Software Engineer','4 years of experience preferred','New York')['in_scope']==1
+    assert classify('Senior Business Analyst','6 years of experience','New York')['in_scope']==0
+    assert classify('Business Analyst','5 years of experience','New York')['in_scope']==0
+    assert classify('Business Analyst','5 years of experience or 2 years of experience with a Masters','New York')['in_scope']==0
+    assert classify('Business Analysis Intern','0 years of experience','New York')['in_scope']==0
+    assert classify('Business Analyst','4 years of experience preferred','New York')['in_scope']==1
 
 
 def test_location_and_cohort():
-    assert classify('Software Engineer','', 'London, UK')['in_scope']==0
-    assert classify('Software Engineer','', 'Remote')['location_status']=='unknown'
-    assert classify('Software Engineer','', 'New York or London')['in_scope']==1
-    assert classify('New Grad Software Engineer 2026','', 'New York')['in_scope']==0
-    assert classify('New Grad Software Engineer 2027','', 'New York')['in_scope']==1
+    assert classify('Business Analyst','', 'London, UK')['in_scope']==1
+    assert classify('Business Analyst','', 'Remote')['location_status']=='unknown'
+    assert classify('Business Analyst','', 'New York or London')['in_scope']==1
+    assert classify('New Grad Business Analyst 2026','', 'New York')['in_scope']==0
+    assert classify('New Grad Business Analyst 2027','', 'New York')['in_scope']==1
 
 
 def test_canonical_url_deduplicates_tracking_but_preserves_job_identity():
@@ -178,9 +178,9 @@ def test_changed_posting_preserves_revision_and_applied_status(db):
 def test_parser_preserves_uncertain_list_evidence():
     markdown='''| Company | Role | Location | Link | Date |
 | --- | --- | --- | --- | --- |
-| Acme | Software Engineer 2027 🛂 | New York, NY | [Apply](https://jobs.ashbyhq.com/acme/123) | Oct 1 |
-| ↳ | Data Engineer | Seattle, WA | [Apply](https://jobs.lever.co/acme/456) | Oct 2 |
-| Other | Software Engineer 🔒 | NY | [Apply](https://example.com/closed) | Oct 1 |
+| Acme | Business Analyst 2027 🛂 | New York, NY | [Apply](https://jobs.ashbyhq.com/acme/123) | Oct 1 |
+| ↳ | Data Analyst | Seattle, WA | [Apply](https://jobs.lever.co/acme/456) | Oct 2 |
+| Other | Business Analyst 🔒 | NY | [Apply](https://example.com/closed) | Oct 1 |
 '''
     jobs=parse_github(markdown,'list')
     assert len(jobs)==2 and jobs[1]['company']=='Acme'
@@ -235,7 +235,7 @@ def test_app_auth_csrf_and_user_data(config,db):
         assert client.post('/api/login',json={'password':config.password},headers=headers).status_code==200
         assert client.get('/api/jobs').status_code==200
         assert client.post('/api/jobs',json={},headers={**headers,'Origin':'https://evil.example'}).status_code==403
-        response=client.post('/api/jobs',json={'title':'Software Engineer','company':'Acme','location':'New York, NY','apply_url':'https://example.com/job'},headers=headers)
+        response=client.post('/api/jobs',json={'title':'Business Analyst','company':'Acme','location':'New York, NY','apply_url':'https://example.com/job'},headers=headers)
         assert response.status_code==200
         records=client.get('/api/jobs').json()['jobs']
         assert records[0]['availability']=='unverified'
